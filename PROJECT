@@ -1,0 +1,35 @@
+domain: distributed.io
+layout:
+- go.kubebuilder.io/v3
+multigroup: true
+projectName: torch-on-k8s
+repo: github.com/hliangzhao/torch-on-k8s
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: distributed.io
+  group: model
+  kind: Model
+  path: github.com/hliangzhao/torch-on-k8s/apis/model/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: distributed.io
+  group: model
+  kind: ModelVersion
+  path: github.com/hliangzhao/torch-on-k8s/apis/model/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: distributed.io
+  group: train
+  kind: TorchJob
+  path: github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1
+  version: v1alpha1
+version: "3"

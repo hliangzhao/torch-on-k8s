@@ -1,0 +1,24 @@
+# permissions for end users to edit torchjobs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: torchjob-editor-role
+rules:
+- apiGroups:
+  - train.distributed.io
+  resources:
+  - torchjobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - train.distributed.io
+  resources:
+  - torchjobs/status
+  verbs:
+  - get

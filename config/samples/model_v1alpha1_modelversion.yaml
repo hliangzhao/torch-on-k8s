@@ -1,0 +1,6 @@
+apiVersion: model.distributed.io/v1alpha1
+kind: ModelVersion
+metadata:
+  name: modelversion-sample
+spec:
+  # TODO(user): Add fields here

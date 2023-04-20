@@ -1,0 +1,6 @@
+apiVersion: train.distributed.io/v1alpha1
+kind: TorchJob
+metadata:
+  name: torchjob-sample
+spec:
+  # TODO(user): Add fields here
