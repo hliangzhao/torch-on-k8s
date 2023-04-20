@@ -10,11 +10,11 @@ Supported features:
   selects a queue and a torchjob in the queue to do the reconciliation).
 * Elastic scaling of torchjob task replicas.
 
-New features compared with [kubedl](https://github.com/kubedl-io/kubedl):
+Something new compared with [kubedl](https://github.com/kubedl-io/kubedl):
 
-* A greedy heuristic for node selection to maximize the storage utilization and performance for the saving of 
+* A [greedy heuristic](https://github.com/hliangzhao/torch-on-k8s/blob/cb0dd4d1dd5afa830426e97112d16ba1de49f4e9/controllers/train/torchjob_controller.go#L230) for node selection to maximize the storage utilization and performance for the saving of 
   output models (designed for local storage).
-* A weighted-round-robin (WRR) algorithm implementation for queue selections in job coordination.
+* A [weighted-round-robin (WRR)](https://github.com/hliangzhao/torch-on-k8s/blob/cb0dd4d1dd5afa830426e97112d16ba1de49f4e9/pkg/coordinator/core/policy.go#L89) algorithm implementation for queue selections in job coordination.
 * Global optimization:
   + Use in-memory cache to improve performance (remove repeating label & annotation generations, etc.)
   + Create service & pod label selectors outside loops to avoid repeating creation.

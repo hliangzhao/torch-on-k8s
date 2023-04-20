@@ -17,7 +17,7 @@ bash "${SCRIPT_ROOT}"/hack/generate-internal-groups.sh "deepcopy,defaulter" \
   --go-header-file "${SCRIPT_ROOT}"/hack/boilerplate.go.txt
 printf "\n"
 
-# Generate for resources defined in apis/train and apis/service
+# Generate for resources defined in apis/train
 echo "Generate for apis..."
 bash "${SCRIPT_ROOT}"/hack/generate-groups.sh "deepcopy,client,informer,lister" \
   github.com/hliangzhao/torch-on-k8s/client github.com/hliangzhao/torch-on-k8s/apis \
