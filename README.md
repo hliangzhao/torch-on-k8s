@@ -22,6 +22,9 @@ Something new compared with [kubedl](https://github.com/kubedl-io/kubedl):
   + In pkg/common/failover.go, `restartPod()` should return `false` rather than `err == nil` when the crr resource 
     status is `kruisev1alpha1.ContainerRecreateRequestFailed`. Otherwise, there is a risk that the to-be-inplace-restart 
     pod will be marked as succeeded when it is not.
+  + When Gang scheduling is enabled, a torchjob enters into `Running` status when the `MinMember` pods are running, 
+    rather than [all pods](https://github.com/hliangzhao/torch-on-k8s/blob/69cc0c7d7c5d605f50b410d82460f36b9c68e3d7/pkg/common/job.go#L109) 
+    are in running state.
 
 ### TODO
 
