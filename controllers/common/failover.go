@@ -19,7 +19,7 @@ package common
 import (
 	"context"
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	concurrentutils "github.com/hliangzhao/torch-on-k8s/pkg/utils/concurrent"
 	patchutils "github.com/hliangzhao/torch-on-k8s/pkg/utils/patch"
 	kruisev1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
@@ -37,7 +37,7 @@ import (
 )
 
 const (
-	AnnotationLastFailoverTimestamp = commonapis.ProjectPrefix + "/last-failover-timestamp"
+	AnnotationLastFailoverTimestamp = trainv1alpha1.ProjectPrefix + "/last-failover-timestamp"
 )
 
 type FailoverAction string
@@ -49,12 +49,12 @@ const (
 
 // shouldPodFailover checks whether the input pod can be fail-overed or not.
 // If the pod can be fail-overed, it will be re-created and re-scheduled.
-func shouldPodFailover(taskSpec *commonapis.TaskSpec, pod *corev1.Pod, exitCode int32) bool {
+func shouldPodFailover(taskSpec *trainv1alpha1.TaskSpec, pod *corev1.Pod, exitCode int32) bool {
 	if pod.Status.Phase == corev1.PodFailed && exitCode == 0 {
 		klog.Warning("pod status conflicts: pod failed with exit code 0")
 	}
 
-	if taskSpec.RestartPolicy != commonapis.RestartPolicyOnExitCode {
+	if taskSpec.RestartPolicy != trainv1alpha1.RestartPolicyOnExitCode {
 		return false
 	}
 	return isRetryableExitCode(exitCode) || isRetryablePodFailedReason(pod.Status.Reason)
@@ -229,7 +229,7 @@ func (jc *JobController) restartPod(job client.Object, pod *corev1.Pod) (complet
 
 	// Each inplace pod restart is handled by each crr resource individually. If the crr generation is not correct,
 	// we need to create a new crr for this new pod restart.
-	if crr.Labels[commonapis.LabelGeneration] != expectedGeneration {
+	if crr.Labels[trainv1alpha1.LabelGeneration] != expectedGeneration {
 		if err = jc.Client.Delete(context.Background(), &crr); err != nil {
 			return false, err
 		}
@@ -270,8 +270,8 @@ func (jc *JobController) createContainerRecreateRequest(job client.Object, pod *
 			Name:      pod.Name,
 			Namespace: pod.Namespace,
 			Labels: map[string]string{
-				commonapis.LabelJobName:    job.GetName(),
-				commonapis.LabelGeneration: expectedGeneration,
+				trainv1alpha1.LabelJobName:    job.GetName(),
+				trainv1alpha1.LabelGeneration: expectedGeneration,
 			},
 			// the to-be-created crr resource is controlled by the corresponding job and job pod
 			OwnerReferences: []metav1.OwnerReference{

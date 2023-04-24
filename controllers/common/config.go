@@ -23,21 +23,19 @@ import (
 
 /* Config of the job controller. */
 
+var JobControllerConfig JobControllerConfiguration
+
+// JobControllerConfiguration describes the configuration of the job controller.
 type JobControllerConfiguration struct {
+	// Gang scheduling is enabled or not. If enabled, Volcano will be used as the gang scheduler.
 	EnableGangScheduling bool
-	GangSchedulerName    string
-
+	// MaxNumConcurrentReconciles is the maximum number of concurrent go routines of job reconciliation.
 	MaxNumConcurrentReconciles int
-
 	// ReconcilerSyncLoopPeriod is the amount of time the reconciler syncs states loop
 	// wait between two reconciler sync. It is set to 15 sec by default.
 	ReconcilerSyncLoopPeriod metav1.Duration
-
-	// HostNetworkPortRange is the range of ports used for hostnetwork mode
+	// HostNetworkPortRange is the range of ports used for hostnetwork mode.
 	HostNetworkPortRange net.PortRange
-
-	// ModelImageBuilder is the Kaniko image name that used for building model image
+	// ModelImageBuilder is the Kaniko image name that used for building model image.
 	ModelImageBuilder string
 }
-
-var JobControllerConfig JobControllerConfiguration

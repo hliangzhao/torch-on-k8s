@@ -19,7 +19,7 @@ package coordinator
 import (
 	"errors"
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils/resources"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/util/workqueue"
@@ -31,7 +31,8 @@ import (
 
 // CoordinateConfiguration gives the config of the coordinator.
 type CoordinateConfiguration struct {
-	SchedulingPeriod  time.Duration
+	SchedulingPeriod time.Duration
+	// the registered plugins
 	TenantPlugin      string
 	PreFilterPlugins  []string
 	FilterPlugins     []string
@@ -46,22 +47,23 @@ type QueueUnit struct {
 	Tenant           string
 	Priority         *int32
 	Job              client.Object
-	SchedulingPolicy *commonapis.SchedulingPolicy
-	Tasks            map[commonapis.TaskType]*commonapis.TaskSpec
-	JobStatus        *commonapis.JobStatus
+	SchedulingPolicy *trainv1alpha1.SchedulingPolicy
+	Tasks            map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec
+	JobStatus        *trainv1alpha1.JobStatus
 	Resources        corev1.ResourceList
 	SportResources   corev1.ResourceList
 	Owner            workqueue.RateLimitingInterface
 }
 
+// Key returns the key of a QueueUnit, used to identify the job that is wrapped by this QueueUnit.
 func (qu *QueueUnit) Key() string {
 	return fmt.Sprintf("%s/%s/%s",
 		qu.Job.GetObjectKind().GroupVersionKind().Kind, qu.Job.GetNamespace(), qu.Job.GetName())
 }
 
 // ToQueueUnit creates a QueueUnit instance with the given job info.
-func ToQueueUnit(job client.Object, tasks map[commonapis.TaskType]*commonapis.TaskSpec, jobStatus *commonapis.JobStatus,
-	schedulingPolicy *commonapis.SchedulingPolicy) *QueueUnit {
+func ToQueueUnit(job client.Object, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, jobStatus *trainv1alpha1.JobStatus,
+	schedulingPolicy *trainv1alpha1.SchedulingPolicy) *QueueUnit {
 
 	qu := &QueueUnit{
 		Job:              job,
@@ -88,17 +90,22 @@ type Code int
 
 // These are predefined codes used in a status.
 const (
-	// Success means that plugin ran correctly and found job schedulable.
+	// Success means that plugin ran correctly and found the QueueUnit (job) schedulable.
 	// NOTE: A nil status is also considered as "Success".
 	Success Code = iota
+
 	// Error is used for internal plugin errors, unexpected input, etc.
 	Error
-	// Unschedulable is used when a plugin finds a job unschedulable.
+
+	// Unschedulable is used when a plugin finds the QueueUnit unschedulable.
 	// The accompanying status message should explain why the pod is unschedulable.
+	// For example, the resource quota cannot be satisfied, etc.
 	Unschedulable
-	// Wait is used when a Permit plugin finds a pod scheduling should wait.
+
+	// Wait is used when a Permit plugin finds the QueueUnit should wait.
 	Wait
-	// Skip is used when a Bind plugin chooses to skip binding.
+
+	// Skip is used when a Bind plugin chooses to skip binding for current QueueUnit.
 	Skip
 )
 
@@ -116,7 +123,8 @@ func NewPluginStatus(code Code, reasons ...string) PluginStatus {
 
 // pluginStatus indicates the result of running a plugin. It consists of
 // a code, a message and (optionally) an error. When the status code is
-// not `Success`, the reasons should explain why.
+// Success, the reasons should explain why. When the status code is Error,
+// err should be set.
 // NOTE: A nil status is also considered as Success.
 type pluginStatus struct {
 	code    Code
@@ -125,6 +133,7 @@ type pluginStatus struct {
 }
 
 func (s *pluginStatus) Code() Code {
+	// NOTE: A nil status is also considered as Success.
 	if s == nil {
 		return Success
 	}

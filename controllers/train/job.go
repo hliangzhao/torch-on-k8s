@@ -21,8 +21,7 @@ import (
 	"errors"
 	"fmt"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
-	"github.com/hliangzhao/torch-on-k8s/pkg/common"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	"github.com/hliangzhao/torch-on-k8s/controllers/common"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -75,8 +74,8 @@ func (r *TorchJobReconciler) DeleteJob(job interface{}) error {
 	return nil
 }
 
-func (r *TorchJobReconciler) UpdateJobStatus(job interface{}, tasks map[commonapis.TaskType]*commonapis.TaskSpec,
-	jobStatus *commonapis.JobStatus, restart bool) error {
+func (r *TorchJobReconciler) UpdateJobStatus(job interface{}, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
+	jobStatus *trainv1alpha1.JobStatus, restart bool) error {
 
 	torchJob, ok := job.(*trainv1alpha1.TorchJob)
 	if !ok {
@@ -85,7 +84,7 @@ func (r *TorchJobReconciler) UpdateJobStatus(job interface{}, tasks map[commonap
 	return r.updateGeneralJobStatus(torchJob, tasks, jobStatus, restart)
 }
 
-func (r *TorchJobReconciler) UpdateJobStatusInAPIServer(job interface{}, jobStatus *commonapis.JobStatus) error {
+func (r *TorchJobReconciler) UpdateJobStatusInAPIServer(job interface{}, jobStatus *trainv1alpha1.JobStatus) error {
 	torchJob, ok := job.(*trainv1alpha1.TorchJob)
 	if !ok {
 		return fmt.Errorf("%+v is not a type of TorchJob", torchJob)
@@ -97,8 +96,8 @@ func (r *TorchJobReconciler) UpdateJobStatusInAPIServer(job interface{}, jobStat
 	return r.Status().Update(context.Background(), jobCopy)
 }
 
-func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob, taskSpecs map[commonapis.TaskType]*commonapis.TaskSpec,
-	jobStatus *commonapis.JobStatus, restart bool) error {
+func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob, taskSpecs map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
+	jobStatus *trainv1alpha1.JobStatus, restart bool) error {
 
 	log.Info("Updating status", "TorchJob name", job.Name, "restart", restart)
 	// Set job status start time since this job has acknowledged by controller.
@@ -110,11 +109,11 @@ func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob,
 	previousRestarting := utils.IsRestarting(*jobStatus)
 	previousFailed := utils.IsFailed(*jobStatus)
 	allWorkersSucceed := false
-	workerTaskSpec, workerFound := taskSpecs[trainv1alpha1.TorchTaskTypeWorker]
+	workerTaskSpec, workerFound := taskSpecs[trainv1alpha1.TaskTypeTorchWorker]
 	if workerFound {
 		numSucceed := int32(0)
-		if jobStatus.TaskStatuses[trainv1alpha1.TorchTaskTypeWorker] != nil {
-			numSucceed = jobStatus.TaskStatuses[trainv1alpha1.TorchTaskTypeWorker].Succeeded
+		if jobStatus.TaskStatuses[trainv1alpha1.TaskTypeTorchWorker] != nil {
+			numSucceed = jobStatus.TaskStatuses[trainv1alpha1.TaskTypeTorchWorker].Succeeded
 		}
 		allWorkersSucceed = *workerTaskSpec.NumTasks == numSucceed
 	}
@@ -135,11 +134,11 @@ func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob,
 		log.Info("Update pytorch job status", "PyTorchJob", job.Name,
 			"ReplicaType", taskType, "expected", expected, "running", running, "failed", failed)
 
-		if utils.ContainsTaskType(taskSpecs, trainv1alpha1.TorchTaskTypeMaster, commonapis.TaskTypeAIMaster) {
-			if taskType == trainv1alpha1.TorchTaskTypeMaster || taskType == commonapis.TaskTypeAIMaster {
+		if utils.ContainsTaskType(taskSpecs, trainv1alpha1.TaskTypeTorchMaster, trainv1alpha1.TaskTypeAIMaster) {
+			if taskType == trainv1alpha1.TaskTypeTorchMaster || taskType == trainv1alpha1.TaskTypeAIMaster {
 				if running > 0 {
 					msg := fmt.Sprintf("TorchJob %s is running.", job.Name)
-					err := utils.UpdateJobConditions(jobStatus, commonapis.JobRunning, utils.JobRunningReason, msg)
+					err := utils.UpdateJobConditions(jobStatus, trainv1alpha1.JobRunning, utils.JobRunningReason, msg)
 					if err != nil {
 						log.Info("Append job condition", " error:", err)
 						return err
@@ -150,7 +149,7 @@ func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob,
 				// 2. if success policy is AllWorkers, then wait util all workers succeed.
 				// 3. aimaster is enabled and it exits successfully.
 				succeed := numTasks > 0 && expected == 0
-				if taskType != commonapis.TaskTypeAIMaster && workerFound {
+				if taskType != trainv1alpha1.TaskTypeAIMaster && workerFound {
 					succeed = succeed && allWorkersSucceed
 				}
 				if succeed {
@@ -160,7 +159,7 @@ func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob,
 						now := metav1.Now()
 						jobStatus.CompletionTime = &now
 					}
-					err := utils.UpdateJobConditions(jobStatus, commonapis.JobSucceed, utils.JobSucceededReason, msg)
+					err := utils.UpdateJobConditions(jobStatus, trainv1alpha1.JobSucceed, utils.JobSucceededReason, msg)
 					if err != nil {
 						log.Info("Append job condition", "error:", err)
 						return err
@@ -174,10 +173,10 @@ func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob,
 		}
 
 		if failed > 0 {
-			if restart && taskType != commonapis.TaskTypeAIMaster {
+			if restart && taskType != trainv1alpha1.TaskTypeAIMaster {
 				msg := fmt.Sprintf("TorchJob %s is restarting because %d %s task(s) failed.", job.Name, failed, taskType)
 				r.recorder.Event(job, corev1.EventTypeWarning, utils.JobRestartingReason, msg)
-				err := utils.UpdateJobConditions(jobStatus, commonapis.JobRestarting, utils.JobRestartingReason, msg)
+				err := utils.UpdateJobConditions(jobStatus, trainv1alpha1.JobRestarting, utils.JobRestartingReason, msg)
 				if err != nil {
 					log.Info("Append job condition", "error:", err)
 					return err
@@ -193,7 +192,7 @@ func (r *TorchJobReconciler) updateGeneralJobStatus(job *trainv1alpha1.TorchJob,
 					now := metav1.Now()
 					jobStatus.CompletionTime = &now
 				}
-				err := utils.UpdateJobConditions(jobStatus, commonapis.JobFailed, utils.JobFailedReason, msg)
+				err := utils.UpdateJobConditions(jobStatus, trainv1alpha1.JobFailed, utils.JobFailedReason, msg)
 				if err != nil {
 					log.Info("Append job condition", "error: ", err)
 					return err

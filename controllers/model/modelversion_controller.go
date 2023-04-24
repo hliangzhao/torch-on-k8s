@@ -19,8 +19,8 @@ package model
 import (
 	"context"
 	"fmt"
-	"github.com/hliangzhao/torch-on-k8s/pkg/common"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
+	"github.com/hliangzhao/torch-on-k8s/controllers/common"
 	"github.com/hliangzhao/torch-on-k8s/pkg/storage/registry"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -125,7 +125,7 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				Status: modelv1alpha1.ModelStatus{},
 			}
 			model.Status.LatestVersion = &modelv1alpha1.VersionInfo{
-				ModelVersion: mv.Namespace,
+				ModelVersion: mv.Name,
 			}
 
 			// The modelversion resource `mv` is controlled by this model. Indicate that by setting the owner reference.
@@ -213,11 +213,11 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			if mv.Labels == nil {
 				mv.Labels = make(map[string]string, 1)
 			}
-			mv.Labels[commonapis.LabelModelName] = model.Name
+			mv.Labels[trainv1alpha1.LabelModelName] = model.Name
 			if mv.Annotations == nil {
 				mv.Annotations = make(map[string]string, 1)
 			}
-			mv.Annotations[commonapis.AnnotationImgBuildPodName] = imgBuildPodName
+			mv.Annotations[trainv1alpha1.AnnotationImgBuildPodName] = imgBuildPodName
 
 			// update modelversion resource in cluster with the newest created model resource
 			mvCopy := mv.DeepCopy()

@@ -21,7 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/golang/glog"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
 	patchutils "github.com/hliangzhao/torch-on-k8s/pkg/utils/patch"
 	corev1 "k8s.io/api/core/v1"
@@ -103,9 +103,9 @@ func (pc *PodControl) DeletePod(namespace string, name string, job runtime.Objec
 	}
 
 	// if pod has the job finalizer, remove the finalizer first, such that the pod can be successfully deleted
-	if utils.HasFinalizer(pod.Finalizers, commonapis.FinalizerPreemptProtector) {
+	if utils.HasFinalizer(pod.Finalizers, trainv1alpha1.FinalizerPreemptProtector) {
 		patch := patchutils.NewStrategicPatch()
-		patch.RemoveFinalizer(commonapis.FinalizerPreemptProtector)
+		patch.RemoveFinalizer(trainv1alpha1.FinalizerPreemptProtector)
 		if err = pc.client.Patch(context.Background(), pod, patch); err != nil {
 			return err
 		}
@@ -231,12 +231,12 @@ func (jc *JobController) OnPodCreateFunc(e event.CreateEvent) bool {
 	pod := e.Object.(*corev1.Pod)
 	if pod.DeletionTimestamp != nil {
 		// if the pod is going to be deleted, do not create it
-		if utils.HasFinalizer(pod.Finalizers, commonapis.FinalizerPreemptProtector) {
+		if utils.HasFinalizer(pod.Finalizers, trainv1alpha1.FinalizerPreemptProtector) {
 			// of course, delete the finalizer such that the pod can be successfully deleted
 			patch := patchutils.NewStrategicPatch()
-			patch.RemoveFinalizer(commonapis.FinalizerPreemptProtector)
+			patch.RemoveFinalizer(trainv1alpha1.FinalizerPreemptProtector)
 			if err := jc.Client.Patch(context.Background(), pod, patch); err != nil {
-				klog.Errorf("failed to remove finalizer %s, err: %v", commonapis.FinalizerPreemptProtector, err)
+				klog.Errorf("failed to remove finalizer %s, err: %v", trainv1alpha1.FinalizerPreemptProtector, err)
 			}
 		}
 		return false
@@ -246,7 +246,7 @@ func (jc *JobController) OnPodCreateFunc(e event.CreateEvent) bool {
 	if controllerRef := metav1.GetControllerOf(pod); controllerRef != nil {
 		job := jc.resolveControllerRef(pod.Namespace, controllerRef)
 		if job == nil {
-			if pod.Labels[commonapis.LabelGroupName] == jc.Controller.GetGroupName() {
+			if pod.Labels[trainv1alpha1.LabelGroupName] == jc.Controller.GetGroupName() {
 				klog.Infof("the pod's job does not exist, pod name: %s", pod.Name)
 			}
 			return false
@@ -258,7 +258,7 @@ func (jc *JobController) OnPodCreateFunc(e event.CreateEvent) bool {
 			return false
 		}
 
-		taskType, ok := pod.Labels[commonapis.LabelTaskType]
+		taskType, ok := pod.Labels[trainv1alpha1.LabelTaskType]
 		if !ok {
 			klog.Infof("the pod does not have job task type label, it is not created by %v, pod name: %s",
 				jc.Controller.ControllerName(), pod.Name)
@@ -318,11 +318,11 @@ func (jc *JobController) OnPodDeleteFunc(e event.DeleteEvent) bool {
 	pod, ok := e.Object.(*corev1.Pod)
 
 	// remove the job finalizer such that the pod can be successfully deleted
-	if utils.HasFinalizer(pod.Finalizers, commonapis.FinalizerPreemptProtector) {
+	if utils.HasFinalizer(pod.Finalizers, trainv1alpha1.FinalizerPreemptProtector) {
 		patch := patchutils.NewStrategicPatch()
-		patch.RemoveFinalizer(commonapis.FinalizerPreemptProtector)
+		patch.RemoveFinalizer(trainv1alpha1.FinalizerPreemptProtector)
 		if err := jc.Client.Patch(context.Background(), pod, patch); err != nil {
-			klog.Errorf("failed to remove finalizer %s, err: %v", commonapis.FinalizerPreemptProtector, err)
+			klog.Errorf("failed to remove finalizer %s, err: %v", trainv1alpha1.FinalizerPreemptProtector, err)
 		}
 	}
 
@@ -343,7 +343,7 @@ func (jc *JobController) OnPodDeleteFunc(e event.DeleteEvent) bool {
 	if err != nil {
 		return false
 	}
-	taskType, ok := pod.Labels[commonapis.LabelTaskType]
+	taskType, ok := pod.Labels[trainv1alpha1.LabelTaskType]
 	if !ok {
 		klog.Infof("the pod does not have job task type label, it is not created by %v, pod name: %s",
 			jc.Controller.ControllerName(), pod.Name)
@@ -358,9 +358,9 @@ func (jc *JobController) OnPodDeleteFunc(e event.DeleteEvent) bool {
 }
 
 // ReconcilePods reconciles the pods of the given job task (identified by task key).
-func (jc *JobController) ReconcilePods(ctx context.Context, job client.Object, jobStatus *commonapis.JobStatus,
-	pods []*corev1.Pod, taskType commonapis.TaskType, taskSpec *commonapis.TaskSpec,
-	tasks map[commonapis.TaskType]*commonapis.TaskSpec, runPolicy *commonapis.RunPolicy,
+func (jc *JobController) ReconcilePods(ctx context.Context, job client.Object, jobStatus *trainv1alpha1.JobStatus,
+	pods []*corev1.Pod, taskType trainv1alpha1.TaskType, taskSpec *trainv1alpha1.TaskSpec,
+	tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, runPolicy *trainv1alpha1.RunPolicy,
 	restart *bool) error {
 
 	// get the to-be-reconciled pods of certain task type
@@ -382,13 +382,13 @@ func (jc *JobController) ReconcilePods(ctx context.Context, job client.Object, j
 	)
 
 	// setup context
-	ctx = context.WithValue(ctx, commonapis.ContextFailedPodContents, failedPodContents)
+	ctx = context.WithValue(ctx, trainv1alpha1.ContextFailedPodContents, failedPodContents)
 
 	// initialize task status
 	if jobStatus.TaskStatuses == nil {
-		jobStatus.TaskStatuses = make(map[commonapis.TaskType]*commonapis.TaskStatus)
+		jobStatus.TaskStatuses = make(map[trainv1alpha1.TaskType]*trainv1alpha1.TaskStatus)
 	}
-	jobStatus.TaskStatuses[taskType] = &commonapis.TaskStatus{}
+	jobStatus.TaskStatuses[taskType] = &trainv1alpha1.TaskStatus{}
 
 	for podIdx, podSlice := range podSlices {
 		if len(podSlice) > 1 {
@@ -467,13 +467,13 @@ func (jc *JobController) ReconcilePods(ctx context.Context, job client.Object, j
 func (jc *JobController) getPodSlices(pods []*corev1.Pod, numTasks int) [][]*corev1.Pod {
 	podSlices := make([][]*corev1.Pod, numTasks)
 	for _, pod := range pods {
-		if _, ok := pod.Labels[commonapis.LabelTaskIndex]; !ok {
+		if _, ok := pod.Labels[trainv1alpha1.LabelTaskIndex]; !ok {
 			klog.Warning("The pod do not have the index label")
 			continue
 		}
 
 		// check the task index of the given pod
-		idx, err := strconv.Atoi(pod.Labels[commonapis.LabelTaskIndex])
+		idx, err := strconv.Atoi(pod.Labels[trainv1alpha1.LabelTaskIndex])
 		if err != nil {
 			klog.Warningf("Error when strconv.Atoi: %v", err)
 			continue
@@ -501,7 +501,7 @@ func (jc *JobController) getPodSlices(pods []*corev1.Pod, numTasks int) [][]*cor
 // (1) Set pod template spec according to the task spec.
 // (2) Create the pod by the settled pod template.
 func (jc *JobController) createNewPod(ctx context.Context, job interface{}, taskType, taskIdx string,
-	taskSpec *commonapis.TaskSpec, masterRole bool, runPolicy *commonapis.RunPolicy) error {
+	taskSpec *trainv1alpha1.TaskSpec, masterRole bool, runPolicy *trainv1alpha1.RunPolicy) error {
 
 	// check job
 	jobMetaObj, ok := job.(metav1.Object)
@@ -517,14 +517,14 @@ func (jc *JobController) createNewPod(ctx context.Context, job interface{}, task
 
 	// set labels for the pod
 	addedLabels := jc.GenerateLabels(jobMetaObj.GetName())
-	addedLabels[commonapis.LabelTaskType] = taskType
-	addedLabels[commonapis.LabelTaskIndex] = taskIdx
+	addedLabels[trainv1alpha1.LabelTaskType] = taskType
+	addedLabels[trainv1alpha1.LabelTaskIndex] = taskIdx
 	if masterRole {
-		addedLabels[commonapis.LabelTaskRole] = "master"
+		addedLabels[trainv1alpha1.LabelTaskRole] = "master"
 	}
 	if jc.Controller.EnableElasticScaling(jobMetaObj, runPolicy) {
-		podTpl.Finalizers = append(podTpl.Finalizers, commonapis.FinalizerPreemptProtector)
-		addedLabels[commonapis.LabelGeneration] = strconv.Itoa(int(jobMetaObj.GetGeneration()))
+		podTpl.Finalizers = append(podTpl.Finalizers, trainv1alpha1.FinalizerPreemptProtector)
+		addedLabels[trainv1alpha1.LabelGeneration] = strconv.Itoa(int(jobMetaObj.GetGeneration()))
 	}
 
 	// set up hostnetwork if enabled
@@ -553,7 +553,7 @@ func (jc *JobController) createNewPod(ctx context.Context, job interface{}, task
 		jc.Recorder.Event(jobRuntimeObj, corev1.EventTypeWarning, podTemplateRestartPolicyReason, errMsg)
 	}
 	// setup restart policy for pod template according to the task spec
-	if taskSpec.RestartPolicy == commonapis.RestartPolicyOnExitCode {
+	if taskSpec.RestartPolicy == trainv1alpha1.RestartPolicyOnExitCode {
 		// RestartPolicyOnExitCode is not supported by `corev1.PodTemplateSpec` anymore
 		podTpl.Spec.RestartPolicy = corev1.RestartPolicyNever
 	} else {
@@ -576,7 +576,7 @@ func (jc *JobController) createNewPod(ctx context.Context, job interface{}, task
 			return err
 		}
 		klog.V(5).Infof("gang scheduling enabled, gang scheduler name: %s, bind pod to gang for job: %s",
-			jc.GangScheduler.PluginName(), jobMetaObj.GetName())
+			jc.GangScheduler.SchedulerName(), jobMetaObj.GetName())
 		// bind pod to Gang
 		if err = jc.GangScheduler.BindPodToPodGroup(jobMetaObj, podTpl, gangEntity, taskType); err != nil {
 			return err
@@ -637,8 +637,8 @@ func (jc *JobController) createNewPod(ctx context.Context, job interface{}, task
 }
 
 // reconcileOnePod reconciles the given pod to its expectation.
-func (jc *JobController) reconcileOnePod(ctx context.Context, job client.Object, jobStatus *commonapis.JobStatus,
-	taskSpec *commonapis.TaskSpec, pod *corev1.Pod, taskIndex, numTasks int, taskType commonapis.TaskType) (failOver bool, exitCode int32, err error) {
+func (jc *JobController) reconcileOnePod(ctx context.Context, job client.Object, jobStatus *trainv1alpha1.JobStatus,
+	taskSpec *trainv1alpha1.TaskSpec, pod *corev1.Pod, taskIndex, numTasks int, taskType trainv1alpha1.TaskType) (failOver bool, exitCode int32, err error) {
 
 	const initialExitCode int32 = 0xbeef
 	exitCode = initialExitCode
@@ -687,7 +687,7 @@ func (jc *JobController) reconcileOnePod(ctx context.Context, job client.Object,
 }
 
 // updateJobTaskStatuses updates the job's status with the given job task pod.
-func updateJobTaskStatuses(jobStatus *commonapis.JobStatus, taskType commonapis.TaskType, pod *corev1.Pod) {
+func updateJobTaskStatuses(jobStatus *trainv1alpha1.JobStatus, taskType trainv1alpha1.TaskType, pod *corev1.Pod) {
 	switch pod.Status.Phase {
 	case corev1.PodPending:
 		if pod.Spec.NodeName != "" && allInitContainersPassed(pod) {

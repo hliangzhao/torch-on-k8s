@@ -19,7 +19,7 @@ package common
 import (
 	"context"
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,18 +27,18 @@ import (
 
 // EnableHostNetwork returns true if the given job enables hostnetwork mode.
 func EnableHostNetwork(job metav1.Object) bool {
-	return job.GetAnnotations()[commonapis.AnnotationNetworkMode] == string(commonapis.HostNetworkMode)
+	return job.GetAnnotations()[trainv1alpha1.AnnotationNetworkMode] == string(trainv1alpha1.HostNetworkMode)
 }
 
 // GetHostNetworkPortFromContext retrieves the port for the given task (specified by taskType-taskIndex).
 func GetHostNetworkPortFromContext(ctx context.Context, taskType, taskIndex string) (int32, bool) {
-	ports := ctx.Value(commonapis.ContextHostNetworkPorts).(map[string]int32)
+	ports := ctx.Value(trainv1alpha1.ContextHostNetworkPorts).(map[string]int32)
 	port, ok := ports[fmt.Sprintf("%s-%s", taskType, taskIndex)]
 	return port, ok
 }
 
 func storeHostNetworkPortToContext(ctx context.Context, taskType, taskIndex string, port int32) {
-	ports := ctx.Value(commonapis.ContextHostNetworkPorts).(map[string]int32)
+	ports := ctx.Value(trainv1alpha1.ContextHostNetworkPorts).(map[string]int32)
 	ports[fmt.Sprintf("%s-%s", taskType, taskIndex)] = port
 }
 

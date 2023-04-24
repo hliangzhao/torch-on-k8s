@@ -19,7 +19,7 @@ package common
 import (
 	"context"
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/features"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
@@ -170,7 +170,7 @@ func (jc *JobController) OnServiceCreateFunc(e event.CreateEvent) bool {
 		if err != nil {
 			return false
 		}
-		taskType, ok := service.Labels[commonapis.LabelTaskType]
+		taskType, ok := service.Labels[trainv1alpha1.LabelTaskType]
 		if !ok {
 			klog.Infof("the service does not have job task type label, it is not created by %v, service name: %s",
 				jc.Controller.ControllerName(), service.Name)
@@ -233,7 +233,7 @@ func (jc *JobController) OnServiceDeleteFunc(e event.DeleteEvent) bool {
 	if err != nil {
 		return false
 	}
-	taskType, ok := service.Labels[commonapis.LabelTaskType]
+	taskType, ok := service.Labels[trainv1alpha1.LabelTaskType]
 	if !ok {
 		klog.Infof("the service does not have job task type label, it is not created by %v, service name: %s",
 			jc.Controller.ControllerName(), service.Name)
@@ -249,7 +249,7 @@ func (jc *JobController) OnServiceDeleteFunc(e event.DeleteEvent) bool {
 
 // ReconcileServices reconciles the service of the given job task (identified by task key).
 func (jc *JobController) ReconcileServices(ctx context.Context, job metav1.Object, services []*corev1.Service,
-	taskType commonapis.TaskType, taskSpec *commonapis.TaskSpec) error {
+	taskType trainv1alpha1.TaskType, taskSpec *trainv1alpha1.TaskSpec) error {
 
 	// get the to-be-reconciled services of certain task type
 	tt := strings.ToLower(string(taskType))
@@ -315,7 +315,7 @@ func (jc *JobController) filterServicesForTaskType(services []*corev1.Service, t
 	labelSelector := &metav1.LabelSelector{
 		MatchLabels: make(map[string]string),
 	}
-	labelSelector.MatchLabels[commonapis.LabelTaskType] = taskType
+	labelSelector.MatchLabels[trainv1alpha1.LabelTaskType] = taskType
 	selector, err := metav1.LabelSelectorAsSelector(labelSelector)
 
 	for _, svc := range services {
@@ -333,14 +333,14 @@ func (jc *JobController) filterServicesForTaskType(services []*corev1.Service, t
 
 // getServiceSlices separates the given services by task index and returns.
 func (jc *JobController) getServiceSlices(services []*corev1.Service, numTasks int) [][]*corev1.Service {
-	svcSlices := make([][]*corev1.Service, numTasks)
+	svcSlices := make([][]*corev1.Service, calculateServiceSliceSize(services, numTasks))
 	for _, svc := range services {
-		if _, ok := svc.Labels[commonapis.LabelTaskType]; !ok {
+		if _, ok := svc.Labels[trainv1alpha1.LabelTaskType]; !ok {
 			klog.Warning("The service do not have the index label")
 			continue
 		}
 
-		index, err := strconv.Atoi(svc.Labels[commonapis.LabelTaskIndex])
+		index, err := strconv.Atoi(svc.Labels[trainv1alpha1.LabelTaskIndex])
 		if err != nil {
 			klog.Warningf("Error when strconv.Atoi: %v", err)
 			continue
@@ -362,18 +362,37 @@ func (jc *JobController) getServiceSlices(services []*corev1.Service, numTasks i
 	return svcSlices
 }
 
+func calculateServiceSliceSize(services []*corev1.Service, numTasks int) int {
+	size := 0
+	for _, svc := range services {
+		index, err := strconv.Atoi(svc.Labels[trainv1alpha1.LabelTaskIndex])
+		if err != nil {
+			klog.Warningf("Error when strconv.Atoi: %v", err)
+			continue
+		}
+		if size < index {
+			size = index
+		}
+	}
+	if size+1 > numTasks {
+		return size + 1
+	} else {
+		return numTasks
+	}
+}
+
 // createNewService creates a new service for the given task type and index.
 // Two steps:
 // (1) Set service spec according to the task spec.
 // (2) Create the service by the settled service spec.
-func (jc *JobController) createNewService(ctx context.Context, job metav1.Object, taskType commonapis.TaskType,
-	taskSpec *commonapis.TaskSpec, taskIndex string) error {
+func (jc *JobController) createNewService(ctx context.Context, job metav1.Object, taskType trainv1alpha1.TaskType,
+	taskSpec *trainv1alpha1.TaskSpec, taskIndex string) error {
 
 	// Set service spec according to the taskSpec. Especially the service port.
 	tt := strings.ToLower(string(taskType))
 	genLabels := jc.GenerateLabels(job.GetName())
-	genLabels[commonapis.LabelTaskType] = tt
-	genLabels[commonapis.LabelTaskIndex] = taskIndex
+	genLabels[trainv1alpha1.LabelTaskType] = tt
+	genLabels[trainv1alpha1.LabelTaskIndex] = taskIndex
 
 	svcPort, err := jc.getPortFromJob(taskSpec)
 	if err != nil {
@@ -414,7 +433,7 @@ func (jc *JobController) createNewService(ctx context.Context, job metav1.Object
 
 // getPortFromJob gets the service port of the given task.
 // The service port of a job task is the port of the default port of the default container.
-func (jc *JobController) getPortFromJob(taskSpec *commonapis.TaskSpec) (int32, error) {
+func (jc *JobController) getPortFromJob(taskSpec *trainv1alpha1.TaskSpec) (int32, error) {
 	containers := taskSpec.Template.Spec.Containers
 	for _, c := range containers {
 		if c.Name == jc.Controller.GetDefaultContainerName() {
@@ -429,7 +448,7 @@ func (jc *JobController) getPortFromJob(taskSpec *commonapis.TaskSpec) (int32, e
 }
 
 // createService creates a new common service with the given task type and index.
-func (jc *JobController) createService(job metav1.Object, taskType commonapis.TaskType,
+func (jc *JobController) createService(job metav1.Object, taskType trainv1alpha1.TaskType,
 	service *corev1.Service, taskIndex string) error {
 
 	jobKey, err := GetJobKey(job)

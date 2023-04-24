@@ -20,24 +20,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ModelSpec defines the desired state of Model
+// ModelSpec defines the desired state of Model.
 type ModelSpec struct {
-	// Description is an arbitrary string that describes what this model for.
+	// Description is a string that describes what this model for.
 	Description *string `json:"description,omitempty"`
 }
 
-// ModelStatus defines the observed state of Model
-type ModelStatus struct {
-	// LatestVersion indicates the latest ModelVersion
-	LatestVersion *VersionInfo `json:"latestVersion,omitempty"`
+// VersionInfo describes the version info of Model.
+type VersionInfo struct {
+	// The name of the latest ModelVersion.
+	ModelVersion string `json:"modelVersion,omitempty"`
+	// The image name of the latest model,  e.g. "docker.io/some-model:v1".
+	ImageName string `json:"imageName,omitempty"`
 }
 
-type VersionInfo struct {
-	// The name of the latest ModelVersion
-	ModelVersion string `json:"modelVersion,omitempty"`
-
-	// The image name of the latest model,  e.g. "docker.io/some-model:v1"
-	ImageName string `json:"imageName,omitempty"`
+// ModelStatus defines the observed state of Model.
+type ModelStatus struct {
+	// LatestVersion indicates the latest VersionInfo.
+	LatestVersion *VersionInfo `json:"latestVersion,omitempty"`
 }
 
 // +kubebuilder:object:root=true

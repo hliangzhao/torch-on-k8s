@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"github.com/hliangzhao/torch-on-k8s/apis"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
 	concurrentutils "github.com/hliangzhao/torch-on-k8s/pkg/utils/concurrent"
 	patchutils "github.com/hliangzhao/torch-on-k8s/pkg/utils/patch"
@@ -48,11 +47,12 @@ import (
 /* Elastic scaling related controls. */
 
 const (
-	AnnotationCheckpointRequestedVersion = commonapis.ProjectPrefix + "/ckpt-requested-version"
-	AnnotationCheckpointCompletedVersion = commonapis.ProjectPrefix + "/ckpt-completed-version"
-	AnnotationReadyToStartWorker         = commonapis.ProjectPrefix + "/ready-to-start-worker"
-	AnnotationImmediatelyStartWorker     = commonapis.ProjectPrefix + "/immediately-start-worker"
-	AnnotationWorldSize                  = commonapis.ProjectPrefix + "/world-size"
+	AnnotationCheckpointRequestedVersion = trainv1alpha1.ProjectPrefix + "/ckpt-requested-version"
+	AnnotationCheckpointCompletedVersion = trainv1alpha1.ProjectPrefix + "/ckpt-completed-version"
+	AnnotationReadyToStartWorker         = trainv1alpha1.ProjectPrefix + "/ready-to-start-worker"
+	AnnotationReadyToRestartWorker       = trainv1alpha1.ProjectPrefix + "/ready-to-restart-worker"
+	AnnotationImmediatelyStartWorker     = trainv1alpha1.ProjectPrefix + "/immediately-start-worker"
+	AnnotationWorldSize                  = trainv1alpha1.ProjectPrefix + "/world-size"
 )
 
 const (
@@ -78,11 +78,11 @@ func init() {
 	apis.AddToSchemes = append(apis.AddToSchemes, kruisev1alpha1.AddToScheme)
 }
 
-func (r *TorchJobReconciler) EnableElasticScaling(job metav1.Object, runPolicy *commonapis.RunPolicy) bool {
-	return job.GetAnnotations()[commonapis.AnnotationEnableElasticTraining] == "true"
+func (r *TorchJobReconciler) EnableElasticScaling(job metav1.Object, runPolicy *trainv1alpha1.RunPolicy) bool {
+	return job.GetAnnotations()[trainv1alpha1.AnnotationEnableElasticTraining] == "true"
 }
 
-func (r *TorchJobReconciler) ScaleOut(job interface{}, tasks map[commonapis.TaskType]*commonapis.TaskSpec, activePods []*corev1.Pod, activeServices []*corev1.Service) error {
+func (r *TorchJobReconciler) ScaleOut(job interface{}, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, activePods []*corev1.Pod, activeServices []*corev1.Service) error {
 	pytorchJob, ok := job.(*trainv1alpha1.TorchJob)
 	if !ok {
 		return fmt.Errorf("%+v is not a type of TorchJob", job)
@@ -94,7 +94,7 @@ func (r *TorchJobReconciler) ScaleOut(job interface{}, tasks map[commonapis.Task
 	return err
 }
 
-func (r *TorchJobReconciler) ScaleIn(job interface{}, tasks map[commonapis.TaskType]*commonapis.TaskSpec, activePods []*corev1.Pod, activeServices []*corev1.Service) error {
+func (r *TorchJobReconciler) ScaleIn(job interface{}, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, activePods []*corev1.Pod, activeServices []*corev1.Service) error {
 	pytorchJob, ok := job.(*trainv1alpha1.TorchJob)
 	if !ok {
 		return fmt.Errorf("%+v is not a type of TorchJob", job)
@@ -108,12 +108,12 @@ func (r *TorchJobReconciler) ScaleIn(job interface{}, tasks map[commonapis.TaskT
 	filteredPods := make([]*corev1.Pod, 0, len(activePods))
 	filteredServices := make([]*corev1.Service, 0, len(activeServices))
 	for _, p := range activePods {
-		if !isIndexOutOfRange(p, taskCountByType[p.Labels[commonapis.LabelTaskType]]) {
+		if !isIndexOutOfRange(p, taskCountByType[p.Labels[trainv1alpha1.LabelTaskType]]) {
 			filteredPods = append(filteredPods, p)
 		}
 	}
 	for _, svc := range activeServices {
-		if !isIndexOutOfRange(svc, taskCountByType[svc.Labels[commonapis.LabelTaskType]]) {
+		if !isIndexOutOfRange(svc, taskCountByType[svc.Labels[trainv1alpha1.LabelTaskType]]) {
 			filteredServices = append(filteredServices, svc)
 		}
 	}
@@ -153,7 +153,7 @@ func (r *TorchJobReconciler) TriggerCheckpointIfNecessary(job interface{}, pods 
 		// 1. complete.Version == request.Version indicates that job checkpoint has completed.
 		// 2. request.Status (InProgress|Succeeded) tracks the whole progress, and job checkpoint
 		//    is a sub-procedure of it. When complete.Version == request.Version satisfied in InProgress
-		//    status, kubedl will clean up victim pods and increase job generation to windup whole progress
+		//    status, we will clean up victim pods and increase job generation to windup whole progress
 		//    and marks checkpoint as Succeeded. Newly observed victim pod events will be merged when status
 		//    is InProgress, that is, a new round checkpoint will be triggered only when new victim pods
 		//    observed in Succeeded status.
@@ -207,7 +207,7 @@ func (r *TorchJobReconciler) TriggerCheckpointIfNecessary(job interface{}, pods 
 // 6) eventually no stale pods can be gathered, mark AnnotationReadyToStartWorker as false to end current round of scaling.
 //
 // The order of the above steps cannot be reversed.
-func (r *TorchJobReconciler) scale(job *trainv1alpha1.TorchJob, tasks map[commonapis.TaskType]*commonapis.TaskSpec,
+func (r *TorchJobReconciler) scale(job *trainv1alpha1.TorchJob, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
 	activePods []*corev1.Pod, activeServices []*corev1.Service) (finished bool, err error) {
 
 	// Refresh master svc to the latest generation.
@@ -226,18 +226,18 @@ func (r *TorchJobReconciler) scale(job *trainv1alpha1.TorchJob, tasks map[common
 
 	// Update elastic scaling state as 'inflight' and it will be marked as 'done' when
 	// process finishes.
-	if job.Annotations[commonapis.AnnotationElasticScaleState] != commonapis.ElasticScaleStateInflight {
+	if job.Annotations[trainv1alpha1.AnnotationElasticScaleState] != trainv1alpha1.ElasticScaleStateInflight {
 		patch := patchutils.NewMergePatch()
-		patch.InsertAnnotation(commonapis.AnnotationElasticScaleState, commonapis.ElasticScaleStateInflight)
+		patch.InsertAnnotation(trainv1alpha1.AnnotationElasticScaleState, trainv1alpha1.ElasticScaleStateInflight)
 		if err = r.Client.Patch(context.Background(), job, patch); err != nil {
 			return false, err
 		}
 	}
 
-	totalTasks := utils.GetTotalExcludedTasks(tasks, commonapis.TaskTypeAIMaster)
-	total, stalePods := filterStalePodsByTaskType(activePods, job.Generation, commonapis.TaskType(strings.ToLower(string(commonapis.TaskTypeAIMaster))))
-	staleWorkers := stalePods[strings.ToLower(string(trainv1alpha1.TorchTaskTypeWorker))]
-	staleMasters := stalePods[strings.ToLower(string(trainv1alpha1.TorchTaskTypeMaster))]
+	totalTasks := utils.GetTotalExcludedTasks(tasks, trainv1alpha1.TaskTypeAIMaster)
+	total, stalePods := FilterStalePodsByTaskType(activePods, job.Generation, trainv1alpha1.TaskType(strings.ToLower(string(trainv1alpha1.TaskTypeAIMaster))))
+	staleWorkers := stalePods[strings.ToLower(string(trainv1alpha1.TaskTypeTorchWorker))]
+	staleMasters := stalePods[strings.ToLower(string(trainv1alpha1.TaskTypeTorchMaster))]
 
 	// Refresh stale master pod.
 	masterCompleted := true
@@ -281,7 +281,7 @@ func (r *TorchJobReconciler) scale(job *trainv1alpha1.TorchJob, tasks map[common
 		log.Info("all pods are in latest generation, mark ready-to-start-worker as false")
 		patch := patchutils.NewMergePatch()
 		patch.InsertAnnotation(AnnotationReadyToStartWorker, "false")
-		patch.InsertAnnotation(commonapis.AnnotationElasticScaleState, commonapis.ElasticScaleStateDone)
+		patch.InsertAnnotation(trainv1alpha1.AnnotationElasticScaleState, trainv1alpha1.ElasticScaleStateDone)
 		if job.Annotations[AnnotationImmediatelyStartWorker] == "true" {
 			patch.InsertAnnotation(AnnotationImmediatelyStartWorker, "false")
 		}
@@ -312,7 +312,7 @@ func (r *TorchJobReconciler) restartStalePod(job *trainv1alpha1.TorchJob, pod *c
 		return err == nil, nil
 	}
 
-	if pod.Labels[commonapis.LabelGeneration] == expectedGeneration {
+	if pod.Labels[trainv1alpha1.LabelGeneration] == expectedGeneration {
 		if ts := getLastRestartFinishTimestamp(pod, r.GetDefaultContainerName()); ts != nil {
 			klog.Infof("pod %s/%s finished restart at %v", pod.Namespace, pod.Name, ts.String())
 		}
@@ -329,7 +329,7 @@ func (r *TorchJobReconciler) restartStalePod(job *trainv1alpha1.TorchJob, pod *c
 
 	// Finally, incremental generation for current worker and mark refreshment done.
 	patch := patchutils.NewStrategicPatch()
-	patch.InsertLabel(commonapis.LabelGeneration, expectedGeneration)
+	patch.InsertLabel(trainv1alpha1.LabelGeneration, expectedGeneration)
 	err = r.Client.Patch(context.Background(), pod, patch)
 	if err != nil {
 		return false, err
@@ -367,7 +367,7 @@ func (r *TorchJobReconciler) restartPodInKruiseProtocol(job *trainv1alpha1.Torch
 		return false, err
 	}
 	// crr created in previous round, clean it.
-	if crr.Labels[commonapis.LabelGeneration] != expectedGeneration {
+	if crr.Labels[trainv1alpha1.LabelGeneration] != expectedGeneration {
 		if err = r.Client.Delete(context.Background(), &crr); err != nil {
 			return false, err
 		}
@@ -401,7 +401,7 @@ func (r *TorchJobReconciler) restartPodInKruiseProtocol(job *trainv1alpha1.Torch
 // will be selected by latest generated service.
 func (r *TorchJobReconciler) refreshStaleService(svc *corev1.Service, generation int64) error {
 	expectedGen := strconv.FormatInt(generation, 10)
-	if svc.Labels[commonapis.LabelGeneration] == expectedGen && svc.Spec.Selector[commonapis.LabelGeneration] == expectedGen {
+	if svc.Labels[trainv1alpha1.LabelGeneration] == expectedGen && svc.Spec.Selector[trainv1alpha1.LabelGeneration] == expectedGen {
 		return nil
 	}
 
@@ -409,11 +409,11 @@ func (r *TorchJobReconciler) refreshStaleService(svc *corev1.Service, generation
 
 	// set labels and selector to the latest, then update through patch
 	svcCopy := svc.DeepCopy()
-	svcCopy.Labels[commonapis.LabelGeneration] = expectedGen
+	svcCopy.Labels[trainv1alpha1.LabelGeneration] = expectedGen
 	if svcCopy.Spec.Selector == nil {
 		svcCopy.Spec.Selector = make(map[string]string)
 	}
-	svcCopy.Spec.Selector[commonapis.LabelGeneration] = expectedGen
+	svcCopy.Spec.Selector[trainv1alpha1.LabelGeneration] = expectedGen
 	if err := r.Client.Patch(context.Background(), svcCopy, client.MergeFrom(svc)); err != nil {
 		log.Error(err, "failed to refresh stale service", "service", svc.Namespace+"/"+svc.Name, "generation", generation)
 		return err
@@ -430,7 +430,7 @@ func (r *TorchJobReconciler) recreatePodContainers(job *trainv1alpha1.TorchJob, 
 			Name:      pod.Name,
 			Namespace: pod.Namespace,
 			Labels: map[string]string{
-				commonapis.LabelGeneration: generation,
+				trainv1alpha1.LabelGeneration: generation,
 			},
 			// the ContainerRecreateRequest is controlled by the to-be-created pod and the job that controls the pod
 			OwnerReferences: []metav1.OwnerReference{
@@ -529,9 +529,9 @@ func (r *TorchJobReconciler) increaseGenerationAndMarkAsSucceeded(job *trainv1al
 	job.Annotations[AnnotationReadyToStartWorker] = "true"
 
 	// update spec
-	spec := job.Spec.TorchTaskSpecs[trainv1alpha1.TorchTaskTypeMaster]
+	spec := job.Spec.TorchTaskSpecs[trainv1alpha1.TaskTypeTorchMaster]
 	if spec == nil {
-		spec = job.Spec.TorchTaskSpecs[trainv1alpha1.TorchTaskTypeWorker]
+		spec = job.Spec.TorchTaskSpecs[trainv1alpha1.TaskTypeTorchWorker]
 	}
 	if spec.Template.Annotations == nil {
 		spec.Template.Annotations = make(map[string]string)
@@ -581,7 +581,7 @@ func AddImageWarmupForWorker(podTemplate *corev1.PodTemplateSpec, mainContainerN
 		Resources: resources,
 	}
 
-	if _, ok := resources.Requests[commonapis.ResourceNvidiaGPU]; ok {
+	if _, ok := resources.Requests[trainv1alpha1.ResourceNvidiaGPU]; ok {
 		initC.Env = []corev1.EnvVar{
 			{Name: "NVIDIA_VISIBLE_DEVICES", Value: ""},
 			{Name: "NVIDIA_DRIVER_CAPABILITIES", Value: "all"},
@@ -605,7 +605,7 @@ func filterMasterService(services []*corev1.Service) *corev1.Service {
 	labelSelector := &metav1.LabelSelector{
 		MatchLabels: map[string]string{},
 	}
-	labelSelector.MatchLabels[commonapis.LabelTaskType] = strings.ToLower(string(trainv1alpha1.TorchTaskTypeMaster))
+	labelSelector.MatchLabels[trainv1alpha1.LabelTaskType] = strings.ToLower(string(trainv1alpha1.TaskTypeTorchMaster))
 	selector, err := metav1.LabelSelectorAsSelector(labelSelector)
 	if err != nil {
 		return nil
@@ -654,8 +654,8 @@ func renderMasterWaiterInitContainer(param InitContainerParam) ([]corev1.Contain
 }
 
 func isIndexOutOfRange(obj metav1.Object, numTasks int64) bool {
-	index := obj.GetLabels()[commonapis.LabelTaskIndex]
-	taskType := obj.GetLabels()[commonapis.LabelTaskType]
+	index := obj.GetLabels()[trainv1alpha1.LabelTaskIndex]
+	taskType := obj.GetLabels()[trainv1alpha1.LabelTaskType]
 	if taskType == "" || index == "" {
 		return false
 	}
@@ -703,7 +703,7 @@ func getLastRestartFinishTimestamp(pod *corev1.Pod, containerName string) *metav
 	return nil
 }
 
-func filterStalePodsByTaskType(pods []*corev1.Pod, generation int64, excludes ...commonapis.TaskType) (total int, stalePods map[string][]*corev1.Pod) {
+func FilterStalePodsByTaskType(pods []*corev1.Pod, generation int64, excludes ...trainv1alpha1.TaskType) (total int, stalePods map[string][]*corev1.Pod) {
 	excludeTaskTypes := sets.NewString()
 	for _, e := range excludes {
 		excludeTaskTypes.Insert(string(e))
@@ -712,7 +712,7 @@ func filterStalePodsByTaskType(pods []*corev1.Pod, generation int64, excludes ..
 	stalePods = make(map[string][]*corev1.Pod)
 	for _, p := range pods {
 		staled := isStalePod(p, generation)
-		tt := p.Labels[commonapis.LabelTaskType]
+		tt := p.Labels[trainv1alpha1.LabelTaskType]
 		if staled && !excludeTaskTypes.Has(tt) {
 			total++
 			stalePods[tt] = append(stalePods[tt], p)
@@ -723,7 +723,7 @@ func filterStalePodsByTaskType(pods []*corev1.Pod, generation int64, excludes ..
 
 func isStalePod(pod *corev1.Pod, generation int64) bool {
 	// TODO: This func might not be required
-	gen := pod.Labels[commonapis.LabelGeneration]
+	gen := pod.Labels[trainv1alpha1.LabelGeneration]
 	if gen == "" {
 		return true
 	}
@@ -736,5 +736,5 @@ func isStalePod(pod *corev1.Pod, generation int64) bool {
 
 func isVictimCandidatePod(pod *corev1.Pod) bool {
 	return pod.DeletionTimestamp != nil &&
-		utils.HasFinalizer(pod.Finalizers, commonapis.FinalizerPreemptProtector)
+		utils.HasFinalizer(pod.Finalizers, trainv1alpha1.FinalizerPreemptProtector)
 }

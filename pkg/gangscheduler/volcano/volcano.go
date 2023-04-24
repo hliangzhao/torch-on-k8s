@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/hliangzhao/torch-on-k8s/apis"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/features"
 	"github.com/hliangzhao/torch-on-k8s/pkg/gangscheduler"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
@@ -42,13 +42,13 @@ import (
 )
 
 func init() {
-	// Add volcano CRD (`PodGroup`) to runtime scheme such that the reflector
+	// Add volcano CRD (`volcanoapisv1beta1.PodGroup`) to runtime scheme such that the reflector
 	// can identify `volcano.PodGroup`.
 	apis.AddToSchemes = append(apis.AddToSchemes, volcanoapisv1beta1.AddToScheme)
 }
 
-func NewVolcano(manager manager.Manager) gangscheduler.GangScheduler {
-	return &volcano{client: manager.GetClient()}
+func NewVolcano(mgr manager.Manager) gangscheduler.GangScheduler {
+	return &volcano{client: mgr.GetClient()}
 }
 
 var _ gangscheduler.GangScheduler = &volcano{}
@@ -57,8 +57,9 @@ type volcano struct {
 	client client.Client
 }
 
-func (v *volcano) CreatePodGroup(job metav1.Object, tasks map[commonapis.TaskType]*commonapis.TaskSpec,
-	schedulingPolicy *commonapis.SchedulingPolicy) (runtime.Object, error) {
+// CreatePodGroup creates a list of podgroups for the given job and its tasks based on the given minMember and schedulingPolicy.
+func (v *volcano) CreatePodGroup(job metav1.Object, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
+	minMembers map[trainv1alpha1.TaskType]*int32, schedulingPolicy *trainv1alpha1.SchedulingPolicy) (runtime.Object, error) {
 
 	accessor, err := meta.TypeAccessor(job)
 	if err != nil {
@@ -69,7 +70,7 @@ func (v *volcano) CreatePodGroup(job metav1.Object, tasks map[commonapis.TaskTyp
 		apiVersion                   = accessor.GetAPIVersion()
 		kind                         = accessor.GetKind()
 		queueName, priorityClassName string
-		podGroups                    *volcanoapisv1beta1.PodGroupList
+		podgroups                    *volcanoapisv1beta1.PodGroupList
 	)
 
 	if schedulingPolicy != nil {
@@ -77,57 +78,83 @@ func (v *volcano) CreatePodGroup(job metav1.Object, tasks map[commonapis.TaskTyp
 		priorityClassName = schedulingPolicy.PriorityClassName
 	}
 
-	// Create podgroup(s) with different granularity
+	// create podgroup(s) with different granularity
 	if features.FeatureGates.Enabled(features.DAGScheduling) {
-		podGroups = v.generateGangByRole(apiVersion, kind, job.GetName(), job.GetNamespace(), job.GetUID(), tasks)
+		podgroups, err = v.generatePodGroupsByRole(apiVersion, kind, job.GetName(), job.GetNamespace(), job.GetUID(), tasks, minMembers)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		podGroups = v.generateGangByJob(apiVersion, kind, job.GetName(), job.GetNamespace(), job.GetUID(), tasks, schedulingPolicy)
+		podgroups = v.generatePodGroupsByJob(apiVersion, kind, job.GetName(), job.GetNamespace(), job.GetUID(), tasks, schedulingPolicy)
 	}
 
-	// create these podgroups resource in cluster
-	for i := range podGroups.Items {
-		pg := &podGroups.Items[i]
+	// create these podgroups resource in cluster if necessary
+	for i := range podgroups.Items {
+		pg := &podgroups.Items[i]
 		pg.Spec.Queue = queueName
 		pg.Spec.PriorityClassName = priorityClassName
 		err = v.client.Get(context.Background(), types.NamespacedName{Name: pg.Name, Namespace: pg.Namespace}, &volcanoapisv1beta1.PodGroup{})
-		if err != nil && errors.IsNotFound(err) {
-			err = v.client.Create(context.Background(), pg)
-		}
 		if err != nil {
+			if errors.IsNotFound(err) {
+				err = v.client.Create(context.Background(), pg)
+			}
 			return nil, err
 		}
 	}
 
-	return podGroups, err
+	return podgroups, nil
 }
 
-// generateGangByRole creates a list of podgroups, each for a task.
-func (v *volcano) generateGangByRole(apiVersion, kind, name, namespace string, uid types.UID,
-	tasks map[commonapis.TaskType]*commonapis.TaskSpec) *volcanoapisv1beta1.PodGroupList {
+// generatePodGroupsByRole creates a list of podgroups, each for a task type.
+func (v *volcano) generatePodGroupsByRole(apiVersion, kind, jobName, namespace string, uid types.UID,
+	tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
+	minMembers map[trainv1alpha1.TaskType]*int32) (*volcanoapisv1beta1.PodGroupList, error) {
 
 	pgs := volcanoapisv1beta1.PodGroupList{Items: make([]volcanoapisv1beta1.PodGroup, 0, len(tasks))}
 
 	for tt, ts := range tasks {
-		// aimaster is scheduled by the default-scheduler, just skip it
-		if tt == commonapis.TaskTypeAIMaster {
+		// aimaster is scheduled by the default kube-scheduler, just skip it
+		if tt == trainv1alpha1.TaskTypeAIMaster {
 			continue
 		}
 		rt := strings.ToLower(string(tt))
-		gangName := fmt.Sprintf("%s-%s", name, rt)
-		taskResourceRequests := resources.TaskResourceRequests(ts)
+		podgroupName := fmt.Sprintf("%s-%s", jobName, rt)
+
+		var (
+			minMember            int32
+			taskResourceRequests corev1.ResourceList
+		)
+		// Actually, this check on minMember is not required because we have
+		// already set the minMembers as default when creating the job.
+		minMemberPtr, ok := minMembers[tt]
+		if !ok {
+			minMember = *ts.NumTasks
+			taskResourceRequests = resources.TaskResourceRequests(ts)
+		} else {
+			if *minMemberPtr > *ts.NumTasks {
+				return nil, fmt.Errorf("the mimMember provided for task type %v is larger than NumTasks, "+
+					"minMember provided: %d, NumTasks: %d", tt, *minMemberPtr, *ts.NumTasks)
+			}
+			minMember = *minMemberPtr
+			taskResourceRequests = resources.MinTaskResourceRequests(ts, minMember)
+		}
+
+		// create the podgroup for this task type
 		pgs.Items = append(pgs.Items, volcanoapisv1beta1.PodGroup{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      gangName,
+				Name:      podgroupName,
 				Namespace: namespace,
+				// these labels are enough to detect the corresponding job of this podgroup
 				Labels: map[string]string{
-					commonapis.LabelGangSchedulingJobName: name,
-					commonapis.LabelTaskType:              rt,
+					trainv1alpha1.LabelGangSchedulingJobName: jobName,
+					trainv1alpha1.LabelTaskType:              rt,
 				},
+				// the podgroup is controlled by the corresponding job
 				OwnerReferences: []metav1.OwnerReference{
 					{
 						APIVersion:         apiVersion,
 						Kind:               kind,
-						Name:               name,
+						Name:               jobName,
 						UID:                uid,
 						Controller:         pointer.BoolPtr(true),
 						BlockOwnerDeletion: pointer.BoolPtr(true),
@@ -135,27 +162,29 @@ func (v *volcano) generateGangByRole(apiVersion, kind, name, namespace string, u
 				},
 			},
 			Spec: volcanoapisv1beta1.PodGroupSpec{
-				MinMember:    *ts.NumTasks,
+				MinMember:    minMember,
 				MinResources: &taskResourceRequests,
 			},
 		})
 	}
 
-	return &pgs
+	return &pgs, nil
 }
 
-// generateGangByJob creates one podgroup for the whole job.
-func (v *volcano) generateGangByJob(apiVersion, kind, name, namespace string, uid types.UID,
-	tasks map[commonapis.TaskType]*commonapis.TaskSpec,
-	schedPolicy *commonapis.SchedulingPolicy) *volcanoapisv1beta1.PodGroupList {
+// generatePodGroupsByJob creates one podgroup for the whole job.
+func (v *volcano) generatePodGroupsByJob(apiVersion, kind, name, namespace string, uid types.UID,
+	tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
+	schedPolicy *trainv1alpha1.SchedulingPolicy) *volcanoapisv1beta1.PodGroupList {
 
 	pg := volcanoapisv1beta1.PodGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			// since we create only one podgroup for the whole job, the label below is enough to detect the corresponding job
 			Labels: map[string]string{
-				commonapis.LabelGangSchedulingJobName: name,
+				trainv1alpha1.LabelGangSchedulingJobName: name,
 			},
+			// the podgroup is controlled by the corresponding job
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         apiVersion,
@@ -167,12 +196,18 @@ func (v *volcano) generateGangByJob(apiVersion, kind, name, namespace string, ui
 				},
 			},
 		},
-		Spec: volcanoapisv1beta1.PodGroupSpec{MinMember: utils.GetTotalTasks(tasks)},
+		Spec: volcanoapisv1beta1.PodGroupSpec{
+			// NOTE: When DAG scheduling is not enabled, all tasks (pods) should be successfully scheduled.
+			// This is because the gang scheduler does not differentiate the task types. If we do not set
+			// the MinMember as the number of all tasks, it's possible for the gang scheduler to set the job as
+			// Running even without successful running of Master task.
+			MinMember: utils.GetTotalTasks(tasks),
+		},
 	}
-	jobResource, _ := resources.JobResourceRequests(tasks)
 
-	// aimaster is scheduled by the default-scheduler, just skip it
-	if masterTask := tasks[commonapis.TaskTypeAIMaster]; masterTask != nil && masterTask.NumTasks != nil {
+	jobResource, _ := resources.JobResourceRequests(tasks)
+	// aimaster is scheduled by the default kube-scheduler, here we subtract NumTasks and resource requests of them
+	if masterTask := tasks[trainv1alpha1.TaskTypeAIMaster]; masterTask != nil && masterTask.NumTasks != nil {
 		if *masterTask.NumTasks > 0 {
 			pg.Spec.MinMember -= *masterTask.NumTasks
 			jobResource = quotav1.SubtractWithNonNegativeResult(jobResource,
@@ -180,34 +215,48 @@ func (v *volcano) generateGangByJob(apiVersion, kind, name, namespace string, ui
 		}
 	}
 
+	// If MinAvailable is set in scheduling policy, use this value as the MinMember for the podgroup
 	if schedPolicy != nil && schedPolicy.MinAvailable != nil && *schedPolicy.MinAvailable > 0 {
 		pg.Spec.MinMember = *schedPolicy.MinAvailable
 	}
+
+	// TODO: This is buggy when schedPolicy.MinAvailable is set but MinResources is not updated!
+	//  Here jobResource is the total resource requests of the job (by subtracting aimaster).
+	//  To fix this, we need to add a new field named `MinResources` for `trainv1alpha1.SchedulingPolicy`.
+	//  Will fix this later.
 	pg.Spec.MinResources = &jobResource
+
 	return &volcanoapisv1beta1.PodGroupList{Items: []volcanoapisv1beta1.PodGroup{pg}}
 }
 
+// BindPodToPodGroup binds the correct podgroup for the given pod of some job task.
+// Steps:
+// (1) Create the selector for the given job task.
+// (2) Select the correct podgroup from the list that matches the job task.
+// (3) Set the podgroup as the controller of the pod by appending the metav1.OwnerReference.
+// (4) Add a new annotation to the pod spec such that the podgroup can be quickly find.
 func (v *volcano) BindPodToPodGroup(job metav1.Object, podSpec *corev1.PodTemplateSpec, podgroups runtime.Object, taskType string) error {
-	// aimaster of the job is scheduled by the default scheduler, but the tasks of the job are scheduled by the gang scheduler
-	if taskType == strings.ToLower(string(commonapis.TaskTypeAIMaster)) {
+	// aimaster of the job is scheduled by the default kube-scheduler, do nothing
+	if taskType == strings.ToLower(string(trainv1alpha1.TaskTypeAIMaster)) {
 		podSpec.Spec.SchedulerName = "default-scheduler"
 		return nil
 	}
 
 	podGroups, ok := podgroups.(*volcanoapisv1beta1.PodGroupList)
 	if !ok {
-		klog.Warningf("object cannot convert to podgroup entity list, entity: %+v", podgroups)
+		klog.Warningf("object cannot convert to podgroup list, Object: %+v", podgroups)
 		return nil
 	}
 	if len(podGroups.Items) == 0 {
-		return fmt.Errorf("unexpected empty podgrpoup entity list, job name: %s", job.GetName())
+		return fmt.Errorf("unexpected empty podgrpoup list, job name: %s", job.GetName())
 	}
 
 	// set selector according to podgroup creation types
 	podGroupName := job.GetName()
-	matchLabels := map[string]string{commonapis.LabelGangSchedulingJobName: job.GetName()}
+	matchLabels := map[string]string{trainv1alpha1.LabelGangSchedulingJobName: job.GetName()}
 	if features.FeatureGates.Enabled(features.DAGScheduling) {
-		matchLabels[commonapis.LabelTaskType] = taskType
+		matchLabels[trainv1alpha1.LabelTaskType] = taskType
+		// note that podGroupName is different when the podgroups are generated with different granularity
 		podGroupName = fmt.Sprintf("%s-%s", job.GetName(), taskType)
 	}
 	selector := labels.SelectorFromSet(matchLabels)
@@ -256,16 +305,18 @@ func ownerReferenceEquals(ref1, ref2 metav1.OwnerReference) bool {
 	return true
 }
 
+// GetPodGroup returns the list of podgroups for the given job.
 func (v *volcano) GetPodGroup(jobName types.NamespacedName) (client.ObjectList, error) {
-	podGroups := &volcanoapisv1beta1.PodGroupList{}
-	if err := v.client.List(context.Background(), podGroups, client.MatchingLabels{
-		commonapis.LabelGangSchedulingJobName: jobName.Name,
+	podgroups := &volcanoapisv1beta1.PodGroupList{}
+	if err := v.client.List(context.Background(), podgroups, client.MatchingLabels{
+		trainv1alpha1.LabelGangSchedulingJobName: jobName.Name,
 	}, client.InNamespace(jobName.Namespace)); err != nil {
 		return nil, err
 	}
-	return podGroups, nil
+	return podgroups, nil
 }
 
+// DeletePodGroup deletes the podgroups of the job.
 func (v *volcano) DeletePodGroup(jobName types.NamespacedName) error {
 	pgs, err := v.GetPodGroup(jobName)
 	if err != nil {
@@ -280,10 +331,6 @@ func (v *volcano) DeletePodGroup(jobName types.NamespacedName) error {
 		}
 	}
 	return err
-}
-
-func (v *volcano) PluginName() string {
-	return "volcano"
 }
 
 func (v *volcano) SchedulerName() string {

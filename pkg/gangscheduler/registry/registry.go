@@ -24,22 +24,22 @@ import (
 	"sync"
 )
 
-/* Register all the Gang schedulers. */
+/* Register the gang scheduler Volcano. More gang schedulers can be added in the future. */
 
 var (
-	GangSchedulers []gangscheduler.NewGangScheduler
-	registry       = Registry{registry: make(map[string]gangscheduler.GangScheduler)}
+	newGangSchedulers []gangscheduler.NewGangScheduler
+	registry          = Registry{registry: make(map[string]gangscheduler.GangScheduler)}
 )
 
 func init() {
 	// add all the provided Gang schedulers into the registry
-	GangSchedulers = append(GangSchedulers, volcano.NewVolcano)
+	newGangSchedulers = append(newGangSchedulers, volcano.NewVolcano)
 }
 
 func Register(manager controllerruntime.Manager) {
-	for _, newer := range GangSchedulers {
+	for _, newer := range newGangSchedulers {
 		scheduler := newer(manager)
-		klog.Infof("register Gang scheduler %s", scheduler.PluginName())
+		klog.Infof("register gang scheduler %s", scheduler.SchedulerName())
 		registry.Add(scheduler)
 	}
 }
@@ -56,7 +56,7 @@ type Registry struct {
 func (r *Registry) Add(scheduler gangscheduler.GangScheduler) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
-	r.registry[scheduler.PluginName()] = scheduler
+	r.registry[scheduler.SchedulerName()] = scheduler
 }
 
 func (r *Registry) Get(name string) gangscheduler.GangScheduler {

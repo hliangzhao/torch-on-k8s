@@ -19,7 +19,8 @@ package main
 import (
 	"github.com/hliangzhao/torch-on-k8s/apis"
 	"github.com/hliangzhao/torch-on-k8s/controllers"
-	"github.com/hliangzhao/torch-on-k8s/pkg/common"
+	"github.com/hliangzhao/torch-on-k8s/controllers/common"
+	"github.com/hliangzhao/torch-on-k8s/controllers/train/torchelastic"
 	"github.com/hliangzhao/torch-on-k8s/pkg/features"
 	gangschedulerregistry "github.com/hliangzhao/torch-on-k8s/pkg/gangscheduler/registry"
 	"github.com/hliangzhao/torch-on-k8s/pkg/metrics"
@@ -58,14 +59,13 @@ func main() {
 	pflag.IntVar(&metricsAddr, "metrics-addr", 8443, "The address the default endpoints binds to.")
 	pflag.BoolVar(&enableLeaderElection, "enable-leader-election", true,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
-	pflag.StringVar(&common.JobControllerConfig.GangSchedulerName, "gang-scheduler-name", "", "specify the name of gang scheduler")
-	pflag.IntVar(&common.JobControllerConfig.MaxNumConcurrentReconciles, "max-reconciles", 1, "specify the number of max concurrent reconciles of each controller")
+	pflag.BoolVar(&common.JobControllerConfig.EnableGangScheduling, "enable-gang-scheduling", true, "Enable gang scheduling or not. If enabled, Volcano will be adopted as the gang scheduler")
+	pflag.IntVar(&common.JobControllerConfig.MaxNumConcurrentReconciles, "max-reconciles", 1, "Specify the number of max concurrent reconciles of each controller")
 	pflag.StringVar(&common.JobControllerConfig.ModelImageBuilder, "model-image-builder", "kubedl/kaniko:latest", "The image name of container builder for building the model image")
-	pflag.StringVar(&hostPortRange, "hostnetwork-port-range", "20000-30000", "hostnetwork port range for hostnetwork-enabled jobs")
+	pflag.StringVar(&hostPortRange, "hostnetwork-port-range", "20000-30000", "Hostnetwork port range for hostnetwork-enabled jobs")
 	features.FeatureGates.AddFlag(pflag.CommandLine)
 	pflag.Parse()
 
-	common.JobControllerConfig.EnableGangScheduling = common.JobControllerConfig.GangSchedulerName != ""
 	common.JobControllerConfig.HostNetworkPortRange = *net.ParsePortRangeOrDie(hostPortRange)
 	if common.JobControllerConfig.MaxNumConcurrentReconciles <= 0 {
 		common.JobControllerConfig.MaxNumConcurrentReconciles = 1
@@ -99,8 +99,14 @@ func main() {
 
 	// setup controllers
 	if err = controllers.SetupWithManager(mgr, common.JobControllerConfig); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "KubeDL")
+		setupLog.Error(err, "unable to create controller")
 		os.Exit(1)
+	}
+
+	// TODO: Move this to add_controllers.go
+	// setup torchelastic controller
+	if err = torchelastic.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create torchelastic controller")
 	}
 
 	// start metrics monitoring

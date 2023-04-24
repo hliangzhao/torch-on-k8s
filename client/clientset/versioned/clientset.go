@@ -20,6 +20,7 @@ package versioned
 import (
 	"fmt"
 
+	modelv1alpha1 "github.com/hliangzhao/torch-on-k8s/client/clientset/versioned/typed/model/v1alpha1"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/client/clientset/versioned/typed/train/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
@@ -28,6 +29,7 @@ import (
 
 type Interface interface {
 	Discovery() discovery.DiscoveryInterface
+	ModelV1alpha1() modelv1alpha1.ModelV1alpha1Interface
 	TrainV1alpha1() trainv1alpha1.TrainV1alpha1Interface
 }
 
@@ -35,7 +37,13 @@ type Interface interface {
 // version included in a Clientset.
 type Clientset struct {
 	*discovery.DiscoveryClient
+	modelV1alpha1 *modelv1alpha1.ModelV1alpha1Client
 	trainV1alpha1 *trainv1alpha1.TrainV1alpha1Client
+}
+
+// ModelV1alpha1 retrieves the ModelV1alpha1Client
+func (c *Clientset) ModelV1alpha1() modelv1alpha1.ModelV1alpha1Interface {
+	return c.modelV1alpha1
 }
 
 // TrainV1alpha1 retrieves the TrainV1alpha1Client
@@ -64,6 +72,10 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 	}
 	var cs Clientset
 	var err error
+	cs.modelV1alpha1, err = modelv1alpha1.NewForConfig(&configShallowCopy)
+	if err != nil {
+		return nil, err
+	}
 	cs.trainV1alpha1, err = trainv1alpha1.NewForConfig(&configShallowCopy)
 	if err != nil {
 		return nil, err
@@ -80,6 +92,7 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 // panics if there is an error in the config.
 func NewForConfigOrDie(c *rest.Config) *Clientset {
 	var cs Clientset
+	cs.modelV1alpha1 = modelv1alpha1.NewForConfigOrDie(c)
 	cs.trainV1alpha1 = trainv1alpha1.NewForConfigOrDie(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClientForConfigOrDie(c)
@@ -89,6 +102,7 @@ func NewForConfigOrDie(c *rest.Config) *Clientset {
 // New creates a new Clientset for the given RESTClient.
 func New(c rest.Interface) *Clientset {
 	var cs Clientset
+	cs.modelV1alpha1 = modelv1alpha1.New(c)
 	cs.trainV1alpha1 = trainv1alpha1.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)

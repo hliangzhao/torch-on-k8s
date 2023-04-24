@@ -14,11 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// +k8s:deepcopy-gen=package,register
-// +k8s:defaulter-gen=TypeMeta
-// +k8s:openapi-gen=true
+package torchelastic
 
-// Package v1alpha1 defines the common structs, interfaces and constants
-// for job training and inference CRDs.
-// +groupName=train.distributed.io
-package v1alpha1
+import (
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+)
+
+func (r *ElasticTorchJobReconciler) GetPodsForJob(job *trainv1alpha1.TorchJob) ([]*corev1.Pod, error) {
+	panic("Implement me")
+}

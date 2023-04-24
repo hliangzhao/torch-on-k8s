@@ -19,7 +19,7 @@ package common
 import (
 	"fmt"
 	"github.com/go-logr/logr"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	pkgcoordinator "github.com/hliangzhao/torch-on-k8s/pkg/coordinator"
 	"github.com/hliangzhao/torch-on-k8s/pkg/features"
 	"github.com/hliangzhao/torch-on-k8s/pkg/metrics"
@@ -31,8 +31,8 @@ import (
 )
 
 // FieldExtractFunc extracts the wanted fields of the given job.
-type FieldExtractFunc func(job client.Object) (tasks map[commonapis.TaskType]*commonapis.TaskSpec,
-	jobStatus *commonapis.JobStatus, schedulingPolicy *commonapis.SchedulingPolicy)
+type FieldExtractFunc func(job client.Object) (tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
+	jobStatus *trainv1alpha1.JobStatus, schedulingPolicy *trainv1alpha1.SchedulingPolicy)
 
 // OnOwnerCreateFunc returns a job create event function to be handled.
 func OnOwnerCreateFunc(scheme *runtime.Scheme, fieldExtractFunc FieldExtractFunc,
@@ -45,7 +45,7 @@ func OnOwnerCreateFunc(scheme *runtime.Scheme, fieldExtractFunc FieldExtractFunc
 
 		tasks, jobStatus, schedulingPolicy := fieldExtractFunc(e.Object)
 
-		if err := utils.UpdateJobConditions(jobStatus, commonapis.JobCreated, utils.JobCreatedReason, msg); err != nil {
+		if err := utils.UpdateJobConditions(jobStatus, trainv1alpha1.JobCreated, utils.JobCreatedReason, msg); err != nil {
 			logger.Error(err, "update job condition error")
 			return false
 		}

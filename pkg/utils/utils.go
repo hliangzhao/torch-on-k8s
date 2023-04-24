@@ -17,7 +17,7 @@ limitations under the License.
 package utils
 
 import (
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -27,7 +27,7 @@ import (
 /* Job, task, and pod checking & counting. */
 
 // GetTotalTasks returns the total number of tasks.
-func GetTotalTasks(tasks map[commonapis.TaskType]*commonapis.TaskSpec) int32 {
+func GetTotalTasks(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec) int32 {
 	ret := int32(0)
 	for _, ts := range tasks {
 		ret += *ts.NumTasks
@@ -36,7 +36,7 @@ func GetTotalTasks(tasks map[commonapis.TaskType]*commonapis.TaskSpec) int32 {
 }
 
 // ContainsTaskType returns true if the given tasks have at least one task whose type is in taskTypes.
-func ContainsTaskType(tasks map[commonapis.TaskType]*commonapis.TaskSpec, taskTypes ...commonapis.TaskType) bool {
+func ContainsTaskType(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, taskTypes ...trainv1alpha1.TaskType) bool {
 	for _, tt := range taskTypes {
 		if _, ok := tasks[tt]; ok {
 			return true
@@ -46,7 +46,7 @@ func ContainsTaskType(tasks map[commonapis.TaskType]*commonapis.TaskSpec, taskTy
 }
 
 // GetTotalExcludedTasks returns the total number of tasks with the excluded task types uncounted.
-func GetTotalExcludedTasks(tasks map[commonapis.TaskType]*commonapis.TaskSpec, excludes ...commonapis.TaskType) int32 {
+func GetTotalExcludedTasks(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, excludes ...trainv1alpha1.TaskType) int32 {
 	excludeTaskTypes := sets.NewString()
 	for _, e := range excludes {
 		excludeTaskTypes.Insert(string(e))
@@ -102,32 +102,32 @@ const (
 )
 
 // IsSucceeded checks if the job is succeeded.
-func IsSucceeded(status commonapis.JobStatus) bool {
-	return hasCondition(status, commonapis.JobSucceed)
+func IsSucceeded(status trainv1alpha1.JobStatus) bool {
+	return hasCondition(status, trainv1alpha1.JobSucceed)
 }
 
 // IsFailed checks if the job is failed.
-func IsFailed(status commonapis.JobStatus) bool {
-	return hasCondition(status, commonapis.JobFailed)
+func IsFailed(status trainv1alpha1.JobStatus) bool {
+	return hasCondition(status, trainv1alpha1.JobFailed)
 }
 
 // IsRunning checks if the job is running.
-func IsRunning(status commonapis.JobStatus) bool {
-	return hasCondition(status, commonapis.JobRunning)
+func IsRunning(status trainv1alpha1.JobStatus) bool {
+	return hasCondition(status, trainv1alpha1.JobRunning)
 }
 
 // IsCreated checks if the job has created.
-func IsCreated(status commonapis.JobStatus) bool {
-	return hasCondition(status, commonapis.JobCreated)
+func IsCreated(status trainv1alpha1.JobStatus) bool {
+	return hasCondition(status, trainv1alpha1.JobCreated)
 }
 
 // IsRestarting checks if the job is restarting.
-func IsRestarting(status commonapis.JobStatus) bool {
-	return hasCondition(status, commonapis.JobRestarting)
+func IsRestarting(status trainv1alpha1.JobStatus) bool {
+	return hasCondition(status, trainv1alpha1.JobRestarting)
 }
 
 // UpdateJobConditions adds to the jobStatus a new condition if needed, with the conditionType, reason, and message.
-func UpdateJobConditions(jobStatus *commonapis.JobStatus, conditionType commonapis.JobConditionType, reason, message string) error {
+func UpdateJobConditions(jobStatus *trainv1alpha1.JobStatus, conditionType trainv1alpha1.JobConditionType, reason, message string) error {
 	condition := newCondition(conditionType, reason, message)
 	setCondition(jobStatus, condition)
 	return nil
@@ -135,13 +135,13 @@ func UpdateJobConditions(jobStatus *commonapis.JobStatus, conditionType commonap
 
 // NeedEnqueueToCoordinator checks if the job need to be enqueued into
 // coordinator if feature-gate is enabled
-func NeedEnqueueToCoordinator(status commonapis.JobStatus) bool {
+func NeedEnqueueToCoordinator(status trainv1alpha1.JobStatus) bool {
 	return len(status.Conditions) == 0 || isJustCreated(status) || IsEnqueued(status)
 }
 
 // IsEnqueued checks whether the given job is enqueued.
-func IsEnqueued(status commonapis.JobStatus) bool {
-	cond := getLastCondition(status, commonapis.JobQueuing)
+func IsEnqueued(status trainv1alpha1.JobStatus) bool {
+	cond := getLastCondition(status, trainv1alpha1.JobQueuing)
 	if cond != nil && cond.Reason == JobEnqueuedReason {
 		return true
 	}
@@ -149,8 +149,8 @@ func IsEnqueued(status commonapis.JobStatus) bool {
 }
 
 // newCondition creates a new job condition.
-func newCondition(conditionType commonapis.JobConditionType, reason, message string) commonapis.JobCondition {
-	return commonapis.JobCondition{
+func newCondition(conditionType trainv1alpha1.JobConditionType, reason, message string) trainv1alpha1.JobCondition {
+	return trainv1alpha1.JobCondition{
 		Type:               conditionType,
 		Status:             corev1.ConditionTrue,
 		LastUpdateTime:     metav1.Now(),
@@ -161,7 +161,7 @@ func newCondition(conditionType commonapis.JobConditionType, reason, message str
 }
 
 // hasCondition checks whether the job is in the given condition.
-func hasCondition(status commonapis.JobStatus, condType commonapis.JobConditionType) bool {
+func hasCondition(status trainv1alpha1.JobStatus, condType trainv1alpha1.JobConditionType) bool {
 	for _, condition := range status.Conditions {
 		if condition.Type == condType && condition.Status == corev1.ConditionTrue {
 			return true
@@ -171,7 +171,7 @@ func hasCondition(status commonapis.JobStatus, condType commonapis.JobConditionT
 }
 
 // getCondition returns the condition with the provided type.
-func getCondition(status commonapis.JobStatus, condType commonapis.JobConditionType) *commonapis.JobCondition {
+func getCondition(status trainv1alpha1.JobStatus, condType trainv1alpha1.JobConditionType) *trainv1alpha1.JobCondition {
 	for _, condition := range status.Conditions {
 		if condition.Type == condType {
 			return &condition
@@ -183,7 +183,7 @@ func getCondition(status commonapis.JobStatus, condType commonapis.JobConditionT
 // setCondition updates the job to include the provided condition.
 // If the condition that we are about to add already exists
 // and has the same status and reason then we are not going to update.
-func setCondition(status *commonapis.JobStatus, condition commonapis.JobCondition) {
+func setCondition(status *trainv1alpha1.JobStatus, condition trainv1alpha1.JobCondition) {
 	// Do nothing if JobStatus have failed condition
 	if IsFailed(*status) || IsSucceeded(*status) {
 		return
@@ -206,7 +206,7 @@ func setCondition(status *commonapis.JobStatus, condition commonapis.JobConditio
 	status.Conditions = append(newConditions, condition)
 }
 
-func getLastCondition(status commonapis.JobStatus, condType commonapis.JobConditionType) *commonapis.JobCondition {
+func getLastCondition(status trainv1alpha1.JobStatus, condType trainv1alpha1.JobConditionType) *trainv1alpha1.JobCondition {
 	if len(status.Conditions) == 0 {
 		return nil
 	}
@@ -218,13 +218,13 @@ func getLastCondition(status commonapis.JobStatus, condType commonapis.JobCondit
 }
 
 // filterOutCondition returns a new slice of job conditions without conditions with the provided type.
-func filterOutCondition(conditions []commonapis.JobCondition, condType commonapis.JobConditionType) []commonapis.JobCondition {
-	var newConditions []commonapis.JobCondition
+func filterOutCondition(conditions []trainv1alpha1.JobCondition, condType trainv1alpha1.JobConditionType) []trainv1alpha1.JobCondition {
+	var newConditions []trainv1alpha1.JobCondition
 	for _, c := range conditions {
-		if condType == commonapis.JobRestarting && c.Type == commonapis.JobRunning {
+		if condType == trainv1alpha1.JobRestarting && c.Type == trainv1alpha1.JobRunning {
 			continue
 		}
-		if condType == commonapis.JobRunning && c.Type == commonapis.JobRestarting {
+		if condType == trainv1alpha1.JobRunning && c.Type == trainv1alpha1.JobRestarting {
 			continue
 		}
 
@@ -233,7 +233,7 @@ func filterOutCondition(conditions []commonapis.JobCondition, condType commonapi
 		}
 
 		// Set the running condition status to be false when current condition failed or succeeded
-		if (condType == commonapis.JobFailed || condType == commonapis.JobSucceed) && c.Type == commonapis.JobRunning {
+		if (condType == trainv1alpha1.JobFailed || condType == trainv1alpha1.JobSucceed) && c.Type == trainv1alpha1.JobRunning {
 			c.Status = corev1.ConditionFalse
 		}
 
@@ -243,6 +243,6 @@ func filterOutCondition(conditions []commonapis.JobCondition, condType commonapi
 }
 
 // isJustCreated checks if the job has created.
-func isJustCreated(status commonapis.JobStatus) bool {
-	return getLastCondition(status, commonapis.JobCreated) != nil
+func isJustCreated(status trainv1alpha1.JobStatus) bool {
+	return getLastCondition(status, trainv1alpha1.JobCreated) != nil
 }

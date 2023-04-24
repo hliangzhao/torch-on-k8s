@@ -19,7 +19,6 @@ package metrics
 import (
 	"context"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -113,7 +112,7 @@ func NewJobMetrics(kind string, client client.Client) *JobMetrics {
 		Help:        "Counts number of jobs pending currently",
 		ConstLabels: label,
 	}, func() float64 {
-		pending, err := jobStatusCounter(kind, client, func(jobStatus commonapis.JobStatus) bool {
+		pending, err := jobStatusCounter(kind, client, func(jobStatus trainv1alpha1.JobStatus) bool {
 			return utils.IsCreated(jobStatus) && len(jobStatus.Conditions) == 1
 		})
 		if err != nil {
@@ -125,7 +124,7 @@ func NewJobMetrics(kind string, client client.Client) *JobMetrics {
 	return metrics
 }
 
-func jobStatusCounter(kind string, reader client.Reader, filter func(status commonapis.JobStatus) bool) (result int32, err error) {
+func jobStatusCounter(kind string, reader client.Reader, filter func(status trainv1alpha1.JobStatus) bool) (result int32, err error) {
 	var list client.ObjectList
 	if obj, ok := listObjectMap[kind]; ok {
 		list = obj.DeepCopyObject().(client.ObjectList)
@@ -150,8 +149,8 @@ var (
 	}
 )
 
-func getJobStatusList(obj runtime.Object, kind string) []*commonapis.JobStatus {
-	statuses := make([]*commonapis.JobStatus, 0)
+func getJobStatusList(obj runtime.Object, kind string) []*trainv1alpha1.JobStatus {
+	statuses := make([]*trainv1alpha1.JobStatus, 0)
 	switch kind {
 	case trainv1alpha1.TorchJobKind:
 		pytorchList := obj.(*trainv1alpha1.TorchJobList)
@@ -184,7 +183,7 @@ func (m *JobMetrics) RestartInc() {
 
 // FirstPodLaunchDelaySeconds calculates the time duration from the job creation time
 // to the time the first pod entering into the running state.
-func (m *JobMetrics) FirstPodLaunchDelaySeconds(activePods []*corev1.Pod, job metav1.Object, jobStatus commonapis.JobStatus) {
+func (m *JobMetrics) FirstPodLaunchDelaySeconds(activePods []*corev1.Pod, job metav1.Object, jobStatus trainv1alpha1.JobStatus) {
 	if !utils.IsRunning(jobStatus) {
 		return
 	}
@@ -217,7 +216,7 @@ func (m *JobMetrics) FirstPodLaunchDelaySeconds(activePods []*corev1.Pod, job me
 
 // AllPodsLaunchDelaySeconds calculates the time duration from the job creation time
 // to the time all pods entering into the running state.
-func (m *JobMetrics) AllPodsLaunchDelaySeconds(pods []*corev1.Pod, job metav1.Object, jobStatus commonapis.JobStatus) {
+func (m *JobMetrics) AllPodsLaunchDelaySeconds(pods []*corev1.Pod, job metav1.Object, jobStatus trainv1alpha1.JobStatus) {
 	if !utils.IsRunning(jobStatus) || jobStatus.StartTime == nil {
 		return
 	}

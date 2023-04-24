@@ -31,15 +31,26 @@ import (
 // and a QueueUnit is popped for processing. Specifically, which QueueUnit
 // is popped depends on the used plugins. For example, with priority plugin,
 // the QueueUnit with the largest priority will be popped.
+// TODO: Add explanations for those methods.
 type Coordinator interface {
+	// Run periodically starts the schedule function until the given ctx is done.
 	Run(ctx context.Context)
+
+	// EnqueueOrUpdate enqueues the given QueueUnit instance into the coordinator queues if the specified queue exists.
+	// If the queue is non-exist, create the queue; If the QueueUnit has already been in the queue, update it.
 	EnqueueOrUpdate(qu *QueueUnit)
+
+	// Dequeue dequeues a QueueUnit instance from the coordinator queues to reconcile.
 	Dequeue(uid types.UID)
+
+	// IsQueuing checks the given object is queuing or not.
 	IsQueuing(uid types.UID) bool
+
+	// SetQueueUnitOwner sets the owner workqueue for the given QueueUnit identified by uid.
 	SetQueueUnitOwner(uid types.UID, owner workqueue.RateLimitingInterface)
 }
 
-/* Interface of coordinator plugins. */
+/* Interface of coordinator plugins. Plugins are used to select a QueueUnit from the queue. */
 
 type Plugin interface {
 	Name() string

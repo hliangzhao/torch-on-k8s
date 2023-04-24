@@ -19,21 +19,21 @@ package controllers
 import (
 	modelv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/model/v1alpha1"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
+	"github.com/hliangzhao/torch-on-k8s/controllers/common"
 	"github.com/hliangzhao/torch-on-k8s/controllers/model"
 	"github.com/hliangzhao/torch-on-k8s/controllers/train"
-	"github.com/hliangzhao/torch-on-k8s/pkg/common"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog"
-	controllerruntime "sigs.k8s.io/controller-runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 /* Set up the controllers. */
 
 var (
-	SetupWithManagerFactory = make(map[runtime.Object]func(mgr controllerruntime.Manager, config common.JobControllerConfiguration) error)
+	SetupWithManagerFactory = make(map[runtime.Object]func(mgr ctrl.Manager, config common.JobControllerConfiguration) error)
 )
 
-func SetupWithManager(mgr controllerruntime.Manager, config common.JobControllerConfiguration) error {
+func SetupWithManager(mgr ctrl.Manager, config common.JobControllerConfiguration) error {
 	for workload, register := range SetupWithManagerFactory {
 		if err := register(mgr, config); err != nil {
 			return err
@@ -44,10 +44,10 @@ func SetupWithManager(mgr controllerruntime.Manager, config common.JobController
 }
 
 func init() {
-	SetupWithManagerFactory[&trainv1alpha1.TorchJob{}] = func(mgr controllerruntime.Manager, config common.JobControllerConfiguration) error {
+	SetupWithManagerFactory[&trainv1alpha1.TorchJob{}] = func(mgr ctrl.Manager, config common.JobControllerConfiguration) error {
 		return train.NewTorchJobReconciler(mgr, config).SetupWithManager(mgr)
 	}
-	SetupWithManagerFactory[&modelv1alpha1.ModelVersion{}] = func(mgr controllerruntime.Manager, config common.JobControllerConfiguration) error {
+	SetupWithManagerFactory[&modelv1alpha1.ModelVersion{}] = func(mgr ctrl.Manager, config common.JobControllerConfiguration) error {
 		return model.NewModelVersionReconciler(mgr, config).SetupWithManager(mgr)
 	}
 }
