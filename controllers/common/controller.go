@@ -18,7 +18,7 @@ package common
 
 import (
 	"context"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/gangscheduler"
 	"github.com/hliangzhao/torch-on-k8s/pkg/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,24 +28,25 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/controller"
+	k8scontroller "k8s.io/kubernetes/pkg/controller"
 	"k8s.io/utils/pointer"
-	controllerruntime "sigs.k8s.io/controller-runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"strings"
 )
 
 var (
-	// GetJobKey is the short name to DeletionHandlingMetaNamespaceKeyFunc.
+	// GetJobKey is the short name to cache.DeletionHandlingMetaNamespaceKeyFunc.
 	// IndexerInformer uses a delta queue, therefore for deletions we have to use this
 	// key function, but it should be just fine for non-deletion events.
+	// TODO: Figure out why it is used in this way.
 	GetJobKey = cache.DeletionHandlingMetaNamespaceKeyFunc
 )
 
 /* The job controller. */
 
-func NewJobController(manager controllerruntime.Manager,
-	controllerImpl commonapis.ControllerInterface,
+func NewJobController(mgr ctrl.Manager,
+	controllerImpl ControllerInterface,
 	config JobControllerConfiguration,
 	recorder record.EventRecorder,
 	metrics *metrics.JobMetrics,
@@ -54,18 +55,18 @@ func NewJobController(manager controllerruntime.Manager,
 	jc := JobController{
 		Config:             config,
 		Controller:         controllerImpl,
-		Expectations:       controller.NewControllerExpectations(),
+		Expectations:       k8scontroller.NewControllerExpectations(),
 		BackoffStatesQueue: workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
 		Recorder:           recorder,
 		Metrics:            metrics,
-		Client:             manager.GetClient(),
-		APIReader:          manager.GetAPIReader(),
+		Client:             mgr.GetClient(),
+		APIReader:          mgr.GetAPIReader(),
 		Scheme:             scheme,
 	}
 
 	jc.patcher = func(oldObj, newObj client.Object) error {
-		newPatchObj := newObj.DeepCopyObject()
-		return jc.Client.Patch(context.Background(), newPatchObj.(client.Object), client.MergeFrom(oldObj))
+		newObjCopied := newObj.DeepCopyObject()
+		return jc.Client.Patch(context.Background(), newObjCopied.(client.Object), client.MergeFrom(oldObj))
 	}
 
 	jc.PodControl = NewPodControl(jc.Client, recorder)
@@ -78,17 +79,19 @@ func NewJobController(manager controllerruntime.Manager,
 // the torchjob controller as an important part.
 type JobController struct {
 	Config     JobControllerConfiguration
-	Controller commonapis.ControllerInterface
+	Controller ControllerInterface
 
-	PodControl     controller.PodControlInterface
+	PodControl     k8scontroller.PodControlInterface
 	ServiceControl ServiceControlInterface
 
 	GangScheduler gangscheduler.GangScheduler
 
+	// TODO: Why not add an entity called ElasticScaler and implement the corresponding functions?
+
 	// A TTLCache of pod/services creates/deletes each job expects to see.
-	// We use Job namespace/name + TaskType + pods/services as an expectation key,
+	// We use Job namespaced name + TaskType + pods/services name as an expectation key,
 	// TODO: Check: for torchjob, how the expectation looks like?
-	Expectations controller.ControllerExpectationsInterface
+	Expectations k8scontroller.ControllerExpectationsInterface
 
 	// BackoffStatesQueue is a rate limited queue and record backoff counts for
 	// those reconciling-failed job instances, and it does not play a role of
@@ -103,6 +106,7 @@ type JobController struct {
 	Metrics *metrics.JobMetrics
 
 	// patcher creates a new patch differentiated from old and new object.
+	// It is a wrapper of client Patch function.
 	patcher func(oldObj, newObj client.Object) error
 
 	// Client talks to api-server and knows how to perform CRUD operations on Kubernetes objects.
@@ -113,10 +117,13 @@ type JobController struct {
 
 	// APIReader knows how to read and list Kubernetes objects bypass cache to avoid retrieving
 	// stale status for the reason of etcd slow-watch.
+	// TODO: When APIReader is used?
 	APIReader client.Reader
 }
 
-// GenerateOwnerReference marks the owner of the given job as the job controller jc.
+// GenerateOwnerReference returns a metav1.OwnerReference where the owner is the given job of Kind
+// "train.distributed.io/v1alpha1: TorchJob". This function will be used to mark the owner of pods & services
+// controlled by this job.
 func (jc *JobController) GenerateOwnerReference(job metav1.Object) *metav1.OwnerReference {
 	controllerRef := &metav1.OwnerReference{
 		APIVersion:         jc.Controller.GetAPIGroupVersion().String(),
@@ -130,30 +137,30 @@ func (jc *JobController) GenerateOwnerReference(job metav1.Object) *metav1.Owner
 }
 
 // jobNameToLabels is an in-memory map from job name to the corresponding labels.
-// The labels are used as selectors for selecting the controlled objects of the job.
+// The labels are used as selectors for selecting the controlled objects (e.g., pods & services) of the job.
 var jobNameToLabels map[string]map[string]string
 
+// GenerateLabels returns a collection of labels, which are used to select the objects controlled by the given job.
 func (jc *JobController) GenerateLabels(jobName string) map[string]string {
 	labels, ok := jobNameToLabels[jobName]
 	if !ok {
-		apiGroupName := jc.Controller.GetGroupName()
 		jobNameToLabels[jobName] = map[string]string{
-			commonapis.LabelGroupName: apiGroupName, // "train.distributed.io"
-			commonapis.LabelJobName:   strings.Replace(jobName, "/", "-", -1),
+			trainv1alpha1.LabelGroupName: jc.Controller.GetGroupName(), // "train.distributed.io"
+			trainv1alpha1.LabelJobName:   strings.Replace(jobName, "/", "-", -1),
 		}
 		labels, _ = jobNameToLabels[jobName]
 	}
 	return labels
 }
 
-// CreatePodGroup creates the podgroup resource for the given job in cluster for gang scheduling.
-func (jc *JobController) CreatePodGroup(job metav1.Object, tasks map[commonapis.TaskType]*commonapis.TaskSpec, schedulingPolicy *commonapis.SchedulingPolicy) (runtime.Object, error) {
-	podgroup, err := jc.GangScheduler.CreatePodGroup(job, tasks, schedulingPolicy)
+// CreatePodGroup creates the podgroup resource for the given job in cluster if gang scheduling is enabled.
+func (jc *JobController) CreatePodGroup(job metav1.Object, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, minMembers map[trainv1alpha1.TaskType]*int32, schedulingPolicy *trainv1alpha1.SchedulingPolicy) (runtime.Object, error) {
+	podgroup, err := jc.GangScheduler.CreatePodGroup(job, tasks, minMembers, schedulingPolicy)
 	if err != nil {
-		klog.Errorf("failed to create podgroup, gang scheduler: %s, err: %v", jc.GangScheduler.PluginName(), err)
+		klog.Errorf("failed to create podgroup, gang scheduler: %s, err: %v", jc.GangScheduler.SchedulerName(), err)
 		return nil, err
 	}
-	klog.Infof("successfully create gang scheduler for job: %s, scheduler name: %s", job.GetName(), jc.GangScheduler.PluginName())
+	klog.Infof("successfully create gang scheduler for job: %s, gang scheduler: %s", job.GetName(), jc.GangScheduler.SchedulerName())
 	return podgroup, nil
 }
 
@@ -172,7 +179,7 @@ func (jc *JobController) DeletePodGroup(job metav1.Object) error {
 
 // resolveControllerRef returns the job referenced by the given controllerRef,
 // or nil if the given controllerRef could not be resolved to a matching job of the correct Kind.
-// This function will be frequently used to find the corresponding controller job of the controlled pod & service.
+// This function will be frequently used to find the corresponding job for the controlled pods & services.
 func (jc *JobController) resolveControllerRef(namespace string, controllerRef *metav1.OwnerReference) metav1.Object {
 	// We can't look up by UID, so look up by Name and then verify UID.
 	// Don't even try to look up by Name if it's the wrong Kind.
@@ -185,7 +192,8 @@ func (jc *JobController) resolveControllerRef(namespace string, controllerRef *m
 	}
 	if job.GetUID() != controllerRef.UID {
 		// The controller we found with this name is not the same one that the
-		// ControllerRef points to.
+		// ControllerRef points to, which means we cannot find the exact job
+		// that controls this object.
 		return nil
 	}
 	return job

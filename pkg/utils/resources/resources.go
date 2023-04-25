@@ -17,7 +17,7 @@ limitations under the License.
 package resources
 
 import (
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	quotav1 "k8s.io/apiserver/pkg/quota/v1"
 )
@@ -70,8 +70,8 @@ func ComputePodSpecResourceRequest(spec *corev1.PodSpec) corev1.ResourceList {
 	return ret
 }
 
-// TaskResourceRequests returns the resource quota for the given task.
-func TaskResourceRequests(taskSpec *commonapis.TaskSpec) corev1.ResourceList {
+// TaskResourceRequests returns the resource quota for a collection of tasks of a certain task type.
+func TaskResourceRequests(taskSpec *trainv1alpha1.TaskSpec) corev1.ResourceList {
 	request := ComputePodSpecResourceRequest(&taskSpec.Template.Spec)
 	numTasks := int32(1)
 	if taskSpec.NumTasks != nil {
@@ -80,8 +80,14 @@ func TaskResourceRequests(taskSpec *commonapis.TaskSpec) corev1.ResourceList {
 	return Multiply(int64(numTasks), request)
 }
 
+// MinTaskResourceRequests returns the minimal resource quota for a collection of tasks of a certain task type.
+func MinTaskResourceRequests(taskSpec *trainv1alpha1.TaskSpec, minMember int32) corev1.ResourceList {
+	request := ComputePodSpecResourceRequest(&taskSpec.Template.Spec)
+	return Multiply(int64(minMember), request)
+}
+
 // JobResourceRequests returns the resource quota of normal tasks and spot tasks for the given job (tasks).
-func JobResourceRequests(tasks map[commonapis.TaskType]*commonapis.TaskSpec) (normal, spot corev1.ResourceList) {
+func JobResourceRequests(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec) (normal, spot corev1.ResourceList) {
 	for _, ts := range tasks {
 		request := ComputePodSpecResourceRequest(&ts.Template.Spec)
 		numTasks := int32(1)

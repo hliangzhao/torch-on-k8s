@@ -21,7 +21,6 @@ import (
 	"fmt"
 	modelv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/model/v1alpha1"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/features"
 	"github.com/hliangzhao/torch-on-k8s/pkg/storage/registry"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
@@ -53,8 +52,9 @@ const (
 )
 
 // ReconcileJobs reconciles the given job.
-func (jc *JobController) ReconcileJobs(job client.Object, tasks map[commonapis.TaskType]*commonapis.TaskSpec,
-	jobStatus commonapis.JobStatus, runPolicy *commonapis.RunPolicy, modelVersion *modelv1alpha1.ModelVersionSpec) (result reconcile.Result, err error) {
+func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec,
+	minMembers map[trainv1alpha1.TaskType]*int32, jobStatus trainv1alpha1.JobStatus, runPolicy *trainv1alpha1.RunPolicy,
+	modelVersion *modelv1alpha1.ModelVersionSpec) (result reconcile.Result, err error) {
 
 	jobName := job.GetName()
 	jobKey, err := GetJobKey(job)
@@ -156,7 +156,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[commonapis.T
 				now := metav1.Now()
 				jobStatus.CompletionTime = &now
 			}
-			err = utils.UpdateJobConditions(&jobStatus, commonapis.JobFailed, utils.JobFailedReason, failureMsg)
+			err = utils.UpdateJobConditions(&jobStatus, trainv1alpha1.JobFailed, utils.JobFailedReason, failureMsg)
 			if err != nil {
 				klog.Infof("Append job condition error: %v", err)
 				return result, err
@@ -192,7 +192,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[commonapis.T
 
 	if jc.Config.EnableGangScheduling {
 		log.Infof("gang schedule enabled, start to syncing for job %s", jobKey)
-		if _, err = jc.CreatePodGroup(job, tasks, runPolicy.SchedulingPolicy); err != nil {
+		if _, err = jc.CreatePodGroup(job, tasks, minMembers, runPolicy.SchedulingPolicy); err != nil {
 			return result, err
 		}
 	}
@@ -232,7 +232,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[commonapis.T
 	addModelPathEnv(tasks, modelVersion)
 
 	// reconcile each task in order
-	ctx := context.WithValue(context.Background(), commonapis.ContextHostNetworkPorts, make(map[string]int32))
+	ctx := context.WithValue(context.Background(), trainv1alpha1.ContextHostNetworkPorts, make(map[string]int32))
 	for _, taskType := range jc.Controller.GetTaskReconcilerOrders() {
 		taskSpec, exist := tasks[taskType]
 		if !exist {
@@ -240,7 +240,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[commonapis.T
 		}
 
 		// non-aimaster tasks should wait until the aimaster task is ready
-		if utils.ContainsTaskType(tasks, commonapis.TaskTypeAIMaster) && taskType != commonapis.TaskTypeAIMaster &&
+		if utils.ContainsTaskType(tasks, trainv1alpha1.TaskTypeAIMaster) && taskType != trainv1alpha1.TaskTypeAIMaster &&
 			job.GetAnnotations()["aimaster"] != "ready" {
 			klog.Infof("Task aimaster is not ready and reconciling is frozen.")
 			return reconcile.Result{}, nil
@@ -263,8 +263,14 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[commonapis.T
 		}
 
 		// reconcile service(s) for the task if required
-		if !jc.shouldCreateService(taskType) {
-			continue
+		if jc.Controller.GetAPIGroupVersionKind().Kind == trainv1alpha1.TorchJobKind {
+			torchJob, ok := job.(*trainv1alpha1.TorchJob)
+			if !ok {
+				klog.Warningf("job is not a TorchJob")
+			}
+			if torchJob.Spec.EnableTorchElastic && taskType != trainv1alpha1.TaskTypeTorchMaster {
+				continue
+			}
 		}
 		err = jc.ReconcileServices(ctx, job, services, taskType, taskSpec)
 		if err != nil {
@@ -343,7 +349,7 @@ func filterPodByPhase(pods []*corev1.Pod, phase corev1.PodPhase) int32 {
 }
 
 // getTotalFailedTasks returns the number of total failed pods in the given tasks.
-func getTotalFailedTasks(tasks map[commonapis.TaskType]*commonapis.TaskStatus) int32 {
+func getTotalFailedTasks(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskStatus) int32 {
 	ret := int32(0)
 	for _, status := range tasks {
 		ret += status.Failed
@@ -354,13 +360,13 @@ func getTotalFailedTasks(tasks map[commonapis.TaskType]*commonapis.TaskStatus) i
 // pastBackoffLimit checks if job's total number of restarts exceeds BackoffLimit.
 // This method applies only to pods with `restartPolicy` is `OnFailure` or `Always`.
 // For those pods, any restart of them will be collected to calculate the restart number of the job.
-func (jc *JobController) pastBackoffLimit(jobName string, runPolicy *commonapis.RunPolicy,
-	tasks map[commonapis.TaskType]*commonapis.TaskSpec, pods []*corev1.Pod) (bool, error) {
+func (jc *JobController) pastBackoffLimit(jobName string, runPolicy *trainv1alpha1.RunPolicy,
+	tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, pods []*corev1.Pod) (bool, error) {
 
 	result := int32(0)
 	for taskType, taskSpec := range tasks {
-		if taskSpec.RestartPolicy != commonapis.RestartPolicyOnFailure &&
-			taskSpec.RestartPolicy != commonapis.RestartPolicyAlways {
+		if taskSpec.RestartPolicy != trainv1alpha1.RestartPolicyOnFailure &&
+			taskSpec.RestartPolicy != trainv1alpha1.RestartPolicyAlways {
 			klog.Warningf("The restart policy of task %v of the job %v is not OnFailure or Always. Not counted in backoff limit.", taskType, jobName)
 			continue
 		}
@@ -391,7 +397,7 @@ func (jc *JobController) pastBackoffLimit(jobName string, runPolicy *commonapis.
 }
 
 // pastActiveDeadline checks if job has ActiveDeadlineSeconds field set and if it is exceeded.
-func (jc *JobController) pastActiveDeadline(runPolicy *commonapis.RunPolicy, jobStatus commonapis.JobStatus) bool {
+func (jc *JobController) pastActiveDeadline(runPolicy *trainv1alpha1.RunPolicy, jobStatus trainv1alpha1.JobStatus) bool {
 	if runPolicy.ActiveDurations == nil || jobStatus.StartTime == nil {
 		return false
 	}
@@ -402,18 +408,18 @@ func (jc *JobController) pastActiveDeadline(runPolicy *commonapis.RunPolicy, job
 }
 
 // deletePodsAndServices deletes related pods and services of the given job according to runPolicy.
-func (jc *JobController) deletePodsAndServices(runPolicy *commonapis.RunPolicy, job interface{}, pods []*corev1.Pod) error {
+func (jc *JobController) deletePodsAndServices(runPolicy *trainv1alpha1.RunPolicy, job interface{}, pods []*corev1.Pod) error {
 	if len(pods) == 0 {
 		return nil
 	}
 
 	// no clean pod policy specified, do nothing
-	if *runPolicy.CleanPodPolicy == commonapis.CleanPodPolicyNone {
+	if *runPolicy.CleanPodPolicy == trainv1alpha1.CleanPodPolicyNone {
 		return nil
 	}
 
 	for _, pod := range pods {
-		if *runPolicy.CleanPodPolicy == commonapis.CleanPodPolicyRunning && pod.Status.Phase != corev1.PodRunning {
+		if *runPolicy.CleanPodPolicy == trainv1alpha1.CleanPodPolicyRunning && pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
 		jobObj, ok := job.(runtime.Object)
@@ -433,7 +439,7 @@ func (jc *JobController) deletePodsAndServices(runPolicy *commonapis.RunPolicy, 
 
 // creteModelVersion creates a modelversion resource in cluster for the given job.
 func (jc *JobController) creteModelVersion(job metav1.Object, modelVersion *modelv1alpha1.ModelVersionSpec,
-	pods []*corev1.Pod, jobStatus *commonapis.JobStatus) error {
+	pods []*corev1.Pod, jobStatus *trainv1alpha1.JobStatus) error {
 
 	mv := &modelv1alpha1.ModelVersion{}
 	mvName := "mv-" + job.GetName() + "-" + string(job.GetUID())[:5]
@@ -478,7 +484,7 @@ func (jc *JobController) creteModelVersion(job metav1.Object, modelVersion *mode
 }
 
 // cleanupJob will do the job deletion when the TTLSecondsAfterFinished is satisfied.
-func (jc *JobController) cleanupJob(runPolicy *commonapis.RunPolicy, jobStatus commonapis.JobStatus, job interface{}) (reconcile.Result, error) {
+func (jc *JobController) cleanupJob(runPolicy *trainv1alpha1.RunPolicy, jobStatus trainv1alpha1.JobStatus, job interface{}) (reconcile.Result, error) {
 	curTime := time.Now()
 	jobObj, _ := job.(metav1.Object)
 	res := reconcile.Result{}
@@ -513,7 +519,7 @@ func getNumTasksForLatestGeneration(pods []*corev1.Pod, generation int64) int32 
 	gen := strconv.FormatInt(generation, 10)
 	ret := int32(0)
 	for _, pod := range pods {
-		if pod.Labels[commonapis.LabelGeneration] == gen {
+		if pod.Labels[trainv1alpha1.LabelGeneration] == gen {
 			ret++
 		}
 	}
@@ -521,7 +527,7 @@ func getNumTasksForLatestGeneration(pods []*corev1.Pod, generation int64) int32 
 }
 
 // addModelPathEnv adds the model path env var and mounts the model volume for every container in the given tasks.
-func addModelPathEnv(tasks map[commonapis.TaskType]*commonapis.TaskSpec, modelVersion *modelv1alpha1.ModelVersionSpec) {
+func addModelPathEnv(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, modelVersion *modelv1alpha1.ModelVersionSpec) {
 	if modelVersion == nil {
 		return
 	}
@@ -531,14 +537,14 @@ func addModelPathEnv(tasks map[commonapis.TaskType]*commonapis.TaskSpec, modelVe
 		for i := range taskSpec.Template.Spec.Containers {
 			exist := false
 			for _, envVar := range taskSpec.Template.Spec.Containers[i].Env {
-				if envVar.Name == modelv1alpha1.ProjectModelPath {
+				if envVar.Name == modelv1alpha1.EnvModelPath {
 					exist = true
 					break
 				}
 			}
 			if !exist {
 				taskSpec.Template.Spec.Containers[i].Env = append(taskSpec.Template.Spec.Containers[i].Env, corev1.EnvVar{
-					Name:  modelv1alpha1.ProjectModelPath,
+					Name:  modelv1alpha1.EnvModelPath,
 					Value: storageProvider.GetModelMountPath(modelVersion.Storage),
 				})
 			}
@@ -548,15 +554,15 @@ func addModelPathEnv(tasks map[commonapis.TaskType]*commonapis.TaskSpec, modelVe
 }
 
 // shouldCreateService checks for the given task type, whether we need to create a service for it.
-func (jc *JobController) shouldCreateService(taskType commonapis.TaskType) bool {
-	if jc.Controller.GetAPIGroupVersionKind().Kind == trainv1alpha1.TorchJobKind && taskType != trainv1alpha1.TorchTaskTypeMaster {
+func (jc *JobController) shouldCreateService(taskType trainv1alpha1.TaskType) bool {
+	if jc.Controller.GetAPIGroupVersionKind().Kind == trainv1alpha1.TorchJobKind && taskType != trainv1alpha1.TaskTypeTorchMaster {
 		return false
 	}
 	return true
 }
 
 // getTotalActivePods returns the total number of active pods for the given tasks.
-func getTotalActivePods(taskStatues map[commonapis.TaskType]*commonapis.TaskStatus) int32 {
+func getTotalActivePods(taskStatues map[trainv1alpha1.TaskType]*trainv1alpha1.TaskStatus) int32 {
 	ret := int32(0)
 	for _, status := range taskStatues {
 		ret += status.Active

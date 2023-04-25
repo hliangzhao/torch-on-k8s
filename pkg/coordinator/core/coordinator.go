@@ -19,7 +19,7 @@ package core
 import (
 	"context"
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	pkgcoordinator "github.com/hliangzhao/torch-on-k8s/pkg/coordinator"
 	"github.com/hliangzhao/torch-on-k8s/pkg/coordinator/plugins"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
@@ -47,7 +47,7 @@ var (
 
 var _ pkgcoordinator.Coordinator = &Coordinator{}
 
-// NewCoordinator initializes the globalCoordinator and starts running it as a go routine.
+// NewCoordinator initializes globalCoordinator and starts running it as a go routine.
 func NewCoordinator(mgr manager.Manager) pkgcoordinator.Coordinator {
 	if globalCoordinator != nil {
 		return globalCoordinator
@@ -103,7 +103,7 @@ func queueStateMarker(c client.Client, recorder record.EventRecorder) func(qu *p
 		if reason == utils.JobDequeuedReason {
 			msg = fmt.Sprintf("Job %s is being dequeued and waiting for reconciling.", qu.Key())
 		}
-		if err := utils.UpdateJobConditions(qu.JobStatus, commonapis.JobQueuing, reason, msg); err != nil {
+		if err := utils.UpdateJobConditions(qu.JobStatus, trainv1alpha1.JobQueuing, reason, msg); err != nil {
 			return err
 		}
 		recorder.Event(qu.Job, corev1.EventTypeNormal, reason, msg)

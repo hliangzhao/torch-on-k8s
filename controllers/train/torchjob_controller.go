@@ -19,9 +19,9 @@ package train
 import (
 	"context"
 	"fmt"
+	modelv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/model/v1alpha1"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
-	"github.com/hliangzhao/torch-on-k8s/pkg/common"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	"github.com/hliangzhao/torch-on-k8s/controllers/common"
 	"github.com/hliangzhao/torch-on-k8s/pkg/coordinator"
 	coordinatorcore "github.com/hliangzhao/torch-on-k8s/pkg/coordinator/core"
 	"github.com/hliangzhao/torch-on-k8s/pkg/features"
@@ -119,9 +119,9 @@ const (
 )
 
 var (
-	log                                = logf.Log.WithName("torchjob-controller")
-	_   reconcile.Reconciler           = &TorchJobReconciler{}
-	_   commonapis.ControllerInterface = &TorchJobReconciler{}
+	log                            = logf.Log.WithName("torchjob-controller")
+	_   reconcile.Reconciler       = &TorchJobReconciler{}
+	_   common.ControllerInterface = &TorchJobReconciler{}
 )
 
 func NewTorchJobReconciler(manager ctrl.Manager, config common.JobControllerConfiguration) *TorchJobReconciler {
@@ -135,7 +135,7 @@ func NewTorchJobReconciler(manager ctrl.Manager, config common.JobControllerConf
 
 	// TODO: Why set gang scheduling in config while coordinator in feature gate?
 	if r.jobController.Config.EnableGangScheduling {
-		r.jobController.GangScheduler = gangschedulerregistry.Get(r.jobController.Config.GangSchedulerName)
+		r.jobController.GangScheduler = gangschedulerregistry.Get(r.jobController.GangScheduler.SchedulerName())
 	}
 	if features.FeatureGates.Enabled(features.JobCoordinator) {
 		r.coordinator = coordinatorcore.NewCoordinator(manager)
@@ -200,8 +200,8 @@ func (r *TorchJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	r.Scheme.Default(torchJobCopy)
 
 	// entrust the job controller to do the reconciliation
-	result, err := r.jobController.ReconcileJobs(torchJobCopy, torchJobCopy.Spec.TorchTaskSpecs, torchJobCopy.Status,
-		&torchJobCopy.Spec.RunPolicy, &torchJobCopy.Spec.ModelVersion.Spec)
+	result, err := r.jobController.ReconcileJobs(torchJobCopy, torchJobCopy.Spec.TorchTaskSpecs, torchJobCopy.Spec.MinMembers,
+		torchJobCopy.Status, &torchJobCopy.Spec.RunPolicy, &torchJobCopy.Spec.ModelVersion.Spec)
 	if err != nil {
 		log.Error(err, "pytorch job reconcile failed")
 		return result, err
@@ -228,30 +228,25 @@ func (r *TorchJobReconciler) GetGroupName() string {
 // GetNodeForModelOutput returns the node name on which the trained model
 // of the corresponding torch training job will be saved.
 func (r *TorchJobReconciler) GetNodeForModelOutput(pods []*corev1.Pod) (nodeName string) {
-	// TODO: Here we replace the default node selection with a heuristic.
-	//  More node selection algorithms can be implemented in future for specified scenarios.
-	nodeName, err := getMostAvailableStorageNode()
-	if err == nil {
-		log.Info("select the node with the most available storage for model output", "NodeName", nodeName)
-		return nodeName
-	} else {
-		log.Info("getMostAvailableStorageNode run failed, select node where master task type is placed for model output")
-		for _, pod := range pods {
-			taskType := pod.Labels[commonapis.LabelTaskType]
-			index, _ := strconv.Atoi(pod.Labels[commonapis.LabelTaskIndex])
-			if taskType == strings.ToLower(string(trainv1alpha1.TorchTaskTypeMaster)) && index == 0 {
-				log.Info("node %s is selected for model output", pod.Spec.NodeName)
-				return pod.Spec.NodeName
-			}
+	// NOTE: I try to replace the node with the result of the best node selection algorithm but failed.
+	// The reason is that the if the node is not the node where the pod runs on, the host path is illegal.
+	// Thus, just return back to the default node where the master task pod is placed.
+	for _, pod := range pods {
+		taskType := pod.Labels[trainv1alpha1.LabelTaskType]
+		taskIndex, _ := strconv.Atoi(pod.Labels[trainv1alpha1.LabelTaskIndex])
+		if taskType == strings.ToLower(string(trainv1alpha1.TaskTypeTorchMaster)) && taskIndex == 0 {
+			log.Info("select %s for model output", pod.Spec.NodeName)
+			return pod.Spec.NodeName
 		}
-		log.Info(fmt.Sprintf("no master task type, select node %v for model output", pods[0].Spec.NodeName))
-		return pods[0].Spec.NodeName
 	}
+	log.Info("no master task type, select node %s for model output", pods[0].Spec.NodeName)
+	return pods[0].Spec.NodeName
 }
 
 // getMostAvailableStorageNode returns the node with the most available storage capacity with node affinity considered.
 // If at least one node is labeled with "fast for storage", we will select the node with the most available storage capacity.
 // Otherwise, we will select the node with the most available storage capacity from all nodes.
+// NOTE: This func is temporarily deprecated.
 func getMostAvailableStorageNode() (string, error) {
 	var (
 		mostAvailNode string
@@ -270,7 +265,7 @@ func getMostAvailableStorageNode() (string, error) {
 
 	// consider the nodes with label tagged first
 	nodeSelector := &metav1.LabelSelector{
-		MatchLabels: map[string]string{commonapis.LabelNodeStorageType: commonapis.LabelNodeStorageTypeFast},
+		MatchLabels: map[string]string{modelv1alpha1.LabelNodeStorageType: modelv1alpha1.LabelNodeStorageTypeFast},
 	}
 	nodeList, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
 		LabelSelector: labels.Set(nodeSelector.MatchLabels).String(),
@@ -328,19 +323,19 @@ func (r *TorchJobReconciler) SetClusterSpec(ctx context.Context, job interface{}
 		return err
 	}
 	masterPort, err := getPortFromJob(torchJob.Spec.TorchTaskSpecs,
-		trainv1alpha1.TorchTaskTypeMaster, trainv1alpha1.TorchJobDefaultContainerName, trainv1alpha1.TorchJobDefaultPortName)
+		trainv1alpha1.TaskTypeTorchMaster, trainv1alpha1.TorchJobDefaultContainerName, trainv1alpha1.TorchJobDefaultPortName)
 	if err != nil {
 		return err
 	}
 
 	// set network mode
-	masterRole := taskType == strings.ToLower(string(trainv1alpha1.TorchTaskTypeMaster))
+	masterRole := taskType == strings.ToLower(string(trainv1alpha1.TaskTypeTorchMaster))
 	if masterHostPort, ok := common.GetHostNetworkPortFromContext(ctx, "master", "0"); common.EnableHostNetwork(torchJob) && ok {
 		if masterRole || features.FeatureGates.Enabled(features.HostNetWithHeadlessSvc) {
 			masterPort = masterHostPort
 		}
 	}
-	masterAddr := utils.GenGeneralName(torchJob.Name, strings.ToLower(string(trainv1alpha1.TorchTaskTypeMaster)), strconv.Itoa(0))
+	masterAddr := utils.GenGeneralName(torchJob.Name, strings.ToLower(string(trainv1alpha1.TaskTypeTorchMaster)), strconv.Itoa(0))
 	if masterRole {
 		if rank != 0 {
 			return fmt.Errorf("invalid config: There should be only a single master with index=0")
@@ -352,8 +347,8 @@ func (r *TorchJobReconciler) SetClusterSpec(ctx context.Context, job interface{}
 		rank++
 	}
 
-	numTotalTasks := int(utils.GetTotalExcludedTasks(torchJob.Spec.TorchTaskSpecs, commonapis.TaskTypeAIMaster))
-	enableElasticScaling := torchJob.Annotations[commonapis.AnnotationEnableElasticTraining] == "true"
+	numTotalTasks := int(utils.GetTotalExcludedTasks(torchJob.Spec.TorchTaskSpecs, trainv1alpha1.TaskTypeAIMaster))
+	enableElasticScaling := torchJob.Annotations[trainv1alpha1.AnnotationEnableElasticTraining] == "true"
 	if enableElasticScaling && !masterRole && taskType != "aimaster" {
 		AddImageWarmupForWorker(podTemplate, r.GetDefaultContainerPortName())
 		err = AddMasterWaiterForWorker(podTemplate, InitContainerParam{
@@ -364,6 +359,37 @@ func (r *TorchJobReconciler) SetClusterSpec(ctx context.Context, job interface{}
 			return err
 		}
 	}
+
+	// Set the torchelastic args as the torchelastic policy indicates.
+	desiredReplicas, err := getDesiredReplicas(torchJob)
+	if err != nil {
+		return err
+	}
+	// read the settings from the elastic policy
+	var numMinReplicas, numMaxReplicas, numWorkersPerNode int32
+	if torchJob.Spec.TorchElasticPolicy.NumMinReplicas != nil {
+		numMinReplicas = *torchJob.Spec.TorchElasticPolicy.NumMinReplicas
+	} else {
+		numMinReplicas = desiredReplicas
+	}
+	if torchJob.Spec.TorchElasticPolicy.NumMaxReplicas != nil {
+		numMaxReplicas = *torchJob.Spec.TorchElasticPolicy.NumMaxReplicas
+	} else {
+		numMaxReplicas = desiredReplicas
+	}
+	if torchJob.Spec.TorchElasticPolicy.NProcPerNode != nil {
+		numWorkersPerNode = *torchJob.Spec.TorchElasticPolicy.NProcPerNode
+	} else {
+		numWorkersPerNode = int32(1)
+	}
+	// generate torchelastic args
+	// (https://pytorch.org/docs/stable/elastic/quickstart.html)
+	torchelasticArgs := []string{
+		"--rdzv_backend=" + torchJob.Spec.TorchElasticPolicy.RendezvousBackend,
+		"--rdzv_endpoint=" + torchJob.Spec.TorchElasticPolicy.RendezvousEndpoint,
+		"--rdzv_id=" + torchJob.Name,
+		"--nproc_per_node=" + strconv.Itoa(int(numWorkersPerNode)),
+		"--nnodes=" + strconv.Itoa(int(numMinReplicas)) + ":" + strconv.Itoa(int(numMaxReplicas))}
 
 	for i := range podTemplate.Spec.Containers {
 		if len(podTemplate.Spec.Containers[i].Env) == 0 {
@@ -385,6 +411,11 @@ func (r *TorchJobReconciler) SetClusterSpec(ctx context.Context, job interface{}
 			Name:  "PYTHONUNBUFFERED",
 			Value: "0",
 		})
+
+		if torchJob.Spec.EnableTorchElastic && torchJob.Spec.TorchElasticPolicy != nil {
+			podTemplate.Spec.Containers[i].Args = append(torchelasticArgs, podTemplate.Spec.Containers[i].Args...)
+		}
+
 		if enableElasticScaling && taskType != "aimaster" {
 			// Job enables elastic scaling select value of AnnotationWorldSize as its
 			// WORLD_SIZE env value via field-path, the annotated value will be mutated
@@ -430,19 +461,19 @@ func (r *TorchJobReconciler) GetDefaultContainerPortNumber() int32 {
 }
 
 // GetTaskReconcilerOrders sets the default task starting & running orders (based on the DAG condition).
-func (r *TorchJobReconciler) GetTaskReconcilerOrders() []commonapis.TaskType {
-	return []commonapis.TaskType{
+func (r *TorchJobReconciler) GetTaskReconcilerOrders() []trainv1alpha1.TaskType {
+	return []trainv1alpha1.TaskType{
 		// the dependency relationship: AIMAster --> Master --> Worker
-		commonapis.TaskTypeAIMaster,
-		trainv1alpha1.TorchTaskTypeMaster,
-		trainv1alpha1.TorchTaskTypeWorker,
+		trainv1alpha1.TaskTypeAIMaster,
+		trainv1alpha1.TaskTypeTorchMaster,
+		trainv1alpha1.TaskTypeTorchWorker,
 	}
 }
 
 // IsMaster checks the given taskType is Master or not.
-func (r *TorchJobReconciler) IsMaster(tasks map[commonapis.TaskType]*commonapis.TaskSpec, taskType commonapis.TaskType) bool {
-	_, ok := tasks[trainv1alpha1.TorchTaskTypeMaster]
-	return ok && taskType == trainv1alpha1.TorchTaskTypeMaster
+func (r *TorchJobReconciler) IsMaster(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, taskType trainv1alpha1.TaskType) bool {
+	_, ok := tasks[trainv1alpha1.TaskTypeTorchMaster]
+	return ok && taskType == trainv1alpha1.TaskTypeTorchMaster
 }
 
 // cleanUpPreemptFinalizers cleans up the `FinalizerPreemptProtector` finalizer in pods meta for a deleted torchjob.
@@ -460,10 +491,10 @@ func (r *TorchJobReconciler) cleanUpPreemptFinalizers(namespace, name string) er
 
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if utils.HasFinalizer(pod.Finalizers, commonapis.FinalizerPreemptProtector) {
-			klog.V(2).Infof("pod %s has finalizer %s, need to remove", pod.Name, commonapis.FinalizerPreemptProtector)
+		if utils.HasFinalizer(pod.Finalizers, trainv1alpha1.FinalizerPreemptProtector) {
+			klog.V(2).Infof("pod %s has finalizer %s, need to remove", pod.Name, trainv1alpha1.FinalizerPreemptProtector)
 			patch := patchutils.NewStrategicPatch()
-			patch.RemoveFinalizer(commonapis.FinalizerPreemptProtector)
+			patch.RemoveFinalizer(trainv1alpha1.FinalizerPreemptProtector)
 			if err := r.Client.Patch(context.Background(), pod, patch); err != nil {
 				return err
 			}
@@ -474,7 +505,7 @@ func (r *TorchJobReconciler) cleanUpPreemptFinalizers(namespace, name string) er
 }
 
 // getPortFromJob gets the port of job default container.
-func getPortFromJob(spec map[commonapis.TaskType]*commonapis.TaskSpec, taskType commonapis.TaskType, containerName, portName string) (int32, error) {
+func getPortFromJob(spec map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, taskType trainv1alpha1.TaskType, containerName, portName string) (int32, error) {
 	containers := spec[taskType].Template.Spec.Containers
 	for _, container := range containers {
 		if container.Name == containerName {
@@ -487,6 +518,15 @@ func getPortFromJob(spec map[commonapis.TaskType]*commonapis.TaskSpec, taskType 
 		}
 	}
 	return -1, fmt.Errorf("failed to found the port")
+}
+
+// getDesiredReplicas returns the number of worker replicas for the given torchjob.
+func getDesiredReplicas(job *trainv1alpha1.TorchJob) (int32, error) {
+	masterTask, ok := job.Spec.TorchTaskSpecs[trainv1alpha1.TaskTypeTorchMaster]
+	if !ok {
+		return 0, fmt.Errorf("torchjob %v does not have %v", job, trainv1alpha1.TaskTypeTorchMaster)
+	}
+	return *masterTask.NumTasks, nil
 }
 
 // isWorkloadCRDInstalled checks whether the given CRD is installed or not.

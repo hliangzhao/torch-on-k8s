@@ -25,39 +25,18 @@ import (
 )
 
 func NewNFSProvider() storage.Storage {
-	return &NFSProvider{}
+	return &Provider{}
 }
 
-var _ storage.Storage = &NFSProvider{}
+var _ storage.Storage = &Provider{}
 
-type NFSProvider struct {
-}
+type Provider struct{}
 
-func (np *NFSProvider) AddModelVolumeToPodSpec(modelstorage *modelv1alpha1.Storage, podTplSpec *corev1.PodTemplateSpec) {
-	// create the volume with the source being remote nfs server
-	podTplSpec.Spec.Volumes = append(podTplSpec.Spec.Volumes,
-		corev1.Volume{
-			Name: "modelvolume",
-			VolumeSource: corev1.VolumeSource{
-				NFS: &corev1.NFSVolumeSource{
-					Path:   modelstorage.NFS.Path,
-					Server: modelstorage.NFS.Server,
-				},
-			},
-		})
-
-	// mount the volume for each container
-	for idx := range podTplSpec.Spec.Containers {
-		podTplSpec.Spec.Containers[idx].VolumeMounts = append(podTplSpec.Spec.Containers[idx].VolumeMounts,
-			corev1.VolumeMount{
-				Name: "modelvolume", MountPath: modelstorage.LocalStorage.MountPath,
-			})
-	}
-}
-
-func (np *NFSProvider) CreatePersistentVolume(modelstorage *modelv1alpha1.Storage, pvName string) *corev1.PersistentVolume {
+// CreatePersistentVolume creates a pv with the source being nfs.
+func (np *Provider) CreatePersistentVolume(modelstorage *modelv1alpha1.Storage, pvName string) *corev1.PersistentVolume {
 	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
+			// Note that pv is cluster-level, not namespace-level.
 			Name: pvName,
 		},
 		Spec: corev1.PersistentVolumeSpec{
@@ -80,6 +59,31 @@ func (np *NFSProvider) CreatePersistentVolume(modelstorage *modelv1alpha1.Storag
 	return pv
 }
 
-func (np *NFSProvider) GetModelMountPath(mv *modelv1alpha1.Storage) string {
-	return mv.LocalStorage.MountPath
+// AddModelVolumeToPodSpec creates a volume with source being nfs,
+// and mounts the volume into all the containers of the pod.
+func (np *Provider) AddModelVolumeToPodSpec(modelstorage *modelv1alpha1.Storage, podTplSpec *corev1.PodTemplateSpec) {
+	// create the volume with the source being remote nfs server
+	podTplSpec.Spec.Volumes = append(podTplSpec.Spec.Volumes,
+		corev1.Volume{
+			Name: "modelvolume",
+			VolumeSource: corev1.VolumeSource{
+				NFS: &corev1.NFSVolumeSource{
+					Path:   modelstorage.NFS.Path,
+					Server: modelstorage.NFS.Server,
+				},
+			},
+		})
+
+	// mount the volume for each container
+	for idx := range podTplSpec.Spec.Containers {
+		podTplSpec.Spec.Containers[idx].VolumeMounts = append(podTplSpec.Spec.Containers[idx].VolumeMounts,
+			corev1.VolumeMount{
+				Name: "modelvolume", MountPath: modelstorage.NFS.MountPath,
+			})
+	}
+}
+
+// GetModelMountPath returns the mount path inside each container of the pod where the model artifact will be stored.
+func (np *Provider) GetModelMountPath(mv *modelv1alpha1.Storage) string {
+	return mv.NFS.MountPath
 }

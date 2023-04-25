@@ -18,7 +18,7 @@ package common
 
 import (
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -80,7 +80,7 @@ func (jc *JobController) filterPodsForTaskType(pods []*corev1.Pod, taskType stri
 	labelSelector := &metav1.LabelSelector{
 		MatchLabels: map[string]string{},
 	}
-	labelSelector.MatchLabels[commonapis.LabelTaskType] = taskType
+	labelSelector.MatchLabels[trainv1alpha1.LabelTaskType] = taskType
 	selector, err := metav1.LabelSelectorAsSelector(labelSelector)
 
 	// select pods by selector

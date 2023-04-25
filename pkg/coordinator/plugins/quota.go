@@ -20,7 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/pkg/coordinator"
 	"github.com/hliangzhao/torch-on-k8s/pkg/utils"
 	flowcontrolutils "github.com/hliangzhao/torch-on-k8s/pkg/utils/flowcontrol"
@@ -184,26 +184,26 @@ func (qp *quotaPlugin) Name() string {
 	return QuotaPluginName
 }
 
-func (qp *quotaPlugin) retrieveLatestStatus(qu *coordinator.QueueUnit) (commonapis.JobStatus, error) {
+func (qp *quotaPlugin) retrieveLatestStatus(qu *coordinator.QueueUnit) (trainv1alpha1.JobStatus, error) {
 	copiedObj := qu.Job.DeepCopyObject().(client.Object)
 	if err := qp.client.Get(context.Background(), types.NamespacedName{
 		Name:      qu.Job.GetName(),
 		Namespace: qu.Job.GetNamespace(),
 	}, copiedObj); err != nil {
-		return commonapis.JobStatus{}, err
+		return trainv1alpha1.JobStatus{}, err
 	}
 	return statusTraitor(copiedObj)
 }
 
 // statusTraitor traits workload status field from object scheme.
-func statusTraitor(obj metav1.Object) (commonapis.JobStatus, error) {
+func statusTraitor(obj metav1.Object) (trainv1alpha1.JobStatus, error) {
 	bytes, err := json.Marshal(obj)
 	if err != nil {
-		return commonapis.JobStatus{}, err
+		return trainv1alpha1.JobStatus{}, err
 	}
-	status := commonapis.JobStatus{}
+	status := trainv1alpha1.JobStatus{}
 	if err = json.Unmarshal([]byte(gjson.GetBytes(bytes, "status").String()), &status); err != nil {
-		return commonapis.JobStatus{}, err
+		return trainv1alpha1.JobStatus{}, err
 	}
 	return status, nil
 }
@@ -218,7 +218,7 @@ type assumedQuotas struct {
 	assumed map[string]map[string]assumedQuota
 
 	// latestStatusFunc retrieves the latest QueueUnit status from cluster.
-	latestStatusFunc func(qu *coordinator.QueueUnit) (commonapis.JobStatus, error)
+	latestStatusFunc func(qu *coordinator.QueueUnit) (trainv1alpha1.JobStatus, error)
 }
 
 // assume specifies resource quantity has been changed for this
@@ -253,7 +253,7 @@ type assumedQuota struct {
 }
 
 // expired checks whether the QueueUnit of aq is expired or not.
-func (aq *assumedQuota) expired(statusFunc func(qu *coordinator.QueueUnit) (commonapis.JobStatus, error)) bool {
+func (aq *assumedQuota) expired(statusFunc func(qu *coordinator.QueueUnit) (trainv1alpha1.JobStatus, error)) bool {
 	if time.Now().Sub(aq.timestamp).Seconds() > defaultQuotaAssumedTimeoutSeconds {
 		klog.V(5).Infof("queue unit %s resources assumed time exceeds threshold [%v], mark it as expired",
 			aq.qu.Key(), defaultQuotaAssumedTimeoutSeconds)

@@ -18,7 +18,7 @@ package common
 
 import (
 	"fmt"
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -26,7 +26,7 @@ import (
 // SatisfyExpectations returns true if the required adds/dels for the given job have been observed.
 // Add/del counts are established by the controller at sync time, and updated as controllees are
 // observed by the controller manager.
-func (jc *JobController) SatisfyExpectations(job metav1.Object, tasks map[commonapis.TaskType]*commonapis.TaskSpec) bool {
+func (jc *JobController) SatisfyExpectations(job metav1.Object, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec) bool {
 	satisfied := true
 	key, err := GetJobKey(job)
 	if err != nil {
@@ -49,7 +49,7 @@ func (jc *JobController) SatisfyExpectations(job metav1.Object, tasks map[common
 	return satisfied
 }
 
-func (jc *JobController) DeleteExpectations(job metav1.Object, tasks map[commonapis.TaskType]*commonapis.TaskSpec) {
+func (jc *JobController) DeleteExpectations(job metav1.Object, tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec) {
 	key, err := GetJobKey(job)
 	if err != nil {
 		log.Error(err, fmt.Sprintf("failed to get the key of job (%s/%s)", job.GetNamespace(), job.GetName()))

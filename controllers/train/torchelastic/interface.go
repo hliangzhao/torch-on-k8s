@@ -14,9 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package train
+package torchelastic
 
-/* The module provides the native elastic training of torch jobs by wrapping
-`TorchElastic` (https://pytorch.org/docs/stable/elastic/quickstart.html). */
+import ctrl "sigs.k8s.io/controller-runtime"
 
-// TODO
+// TODO: This can be removed. Merge this to add_controllers.go
+
+type ElasticTorchJobController interface {
+	SetupWithManager(mgr ctrl.Manager) error
+}
+
+var _ ElasticTorchJobController = &ElasticTorchJobReconciler{}
+
+type newElasticTorchJobController func(mgr ctrl.Manager, period, count int) ElasticTorchJobController

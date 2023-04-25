@@ -17,8 +17,78 @@ limitations under the License.
 package v1alpha1
 
 import (
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 )
+
+// ProjectPrefix is the global prefix。
+const ProjectPrefix = "distributed.io"
+
+const (
+	// ResourceNvidiaGPU is the resource name of nvidia GPU.
+	ResourceNvidiaGPU corev1.ResourceName = "nvidia.com/gpu"
+)
+
+/* Constants used for differentiating jobs and tasks. */
+
+const (
+	LabelJobName   = "job-name"
+	LabelGroupName = "group-name"
+	LabelTaskIndex = "task-index"
+	LabelTaskType  = "task-type" // TODO: What's the difference between task type and task role?
+	LabelTaskRole  = "task-role"
+)
+
+/* Gang scheduling related. */
+
+const (
+	// LabelGangSchedulingJobName is used to mark the job to be scheduled by custom gang scheduler,
+	// rather than the default kube-scheduler.
+	LabelGangSchedulingJobName = ProjectPrefix + "/gang-job-name"
+)
+
+/* Model output related. */
+
+const (
+	LabelModelName            = "model." + ProjectPrefix + "/model-name"
+	AnnotationImgBuildPodName = "model." + ProjectPrefix + "/img-build-pod-name"
+)
+
+/* Network mode related. */
+
+// NetworkMode defines network mode for intra-job communicating
+type NetworkMode string
+
+const (
+	AnnotationNetworkMode             = ProjectPrefix + "/network-mode"
+	HostNetworkMode       NetworkMode = "host"
+	// ContextHostNetworkPorts is the key for passing selected host-ports, value is
+	// a map object {taskType-taskIndex: port}.
+	ContextHostNetworkPorts = ProjectPrefix + "/hostnetwork-ports"
+)
+
+/* Elastic scaling related. This is used for the default scaler, and it has nothing to do with torchelastic. */
+
+const (
+	AnnotationEnableElasticTraining = ProjectPrefix + "/enable-elastic-training"
+	AnnotationElasticScaleState     = ProjectPrefix + "/scale-state"
+	ElasticScaleStateInflight       = "inflight"
+	ElasticScaleStateDone           = "done"
+	// LabelGeneration is used for elastic scaling to differentiate the generations (versions) of task pods.
+	LabelGeneration = ProjectPrefix + "/job-generation"
+)
+
+/* Pod deletion and failure related. */
+
+const (
+	// ContextFailedPodContents collects failed pod exit codes while with its failed
+	// reason if they are not retryable
+	ContextFailedPodContents = ProjectPrefix + "/failed-pod-contents"
+
+	// FinalizerPreemptProtector is the finalizer added to the controlled pods by torchjob
+	FinalizerPreemptProtector = ProjectPrefix + "/preempt-protector"
+)
+
+/* Torch job specified constants. */
 
 const (
 	TorchJobKind = "TorchJob"
@@ -33,14 +103,8 @@ const (
 	TorchJobDefaultPort = 23456
 
 	// TorchJobDefaultMasterRestartPolicy is the default RestartPolicy for master task.
-	TorchJobDefaultMasterRestartPolicy = commonapis.RestartPolicyOnExitCode
+	TorchJobDefaultMasterRestartPolicy = RestartPolicyOnExitCode
 
 	// TorchJobDefaultWorkerRestartPolicy is default RestartPolicy for worker task.
-	TorchJobDefaultWorkerRestartPolicy = commonapis.RestartPolicyOnFailure
-
-	// TorchTaskTypeMaster is the type of Master of distributed PyTorch training job.
-	TorchTaskTypeMaster commonapis.TaskType = "Master"
-
-	// TorchTaskTypeWorker is the type for workers of distributed PyTorch training job.
-	TorchTaskTypeWorker commonapis.TaskType = "Worker"
+	TorchJobDefaultWorkerRestartPolicy = RestartPolicyOnFailure
 )

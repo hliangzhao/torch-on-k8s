@@ -19,6 +19,8 @@ package fake
 
 import (
 	clientset "github.com/hliangzhao/torch-on-k8s/client/clientset/versioned"
+	modelv1alpha1 "github.com/hliangzhao/torch-on-k8s/client/clientset/versioned/typed/model/v1alpha1"
+	fakemodelv1alpha1 "github.com/hliangzhao/torch-on-k8s/client/clientset/versioned/typed/model/v1alpha1/fake"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/client/clientset/versioned/typed/train/v1alpha1"
 	faketrainv1alpha1 "github.com/hliangzhao/torch-on-k8s/client/clientset/versioned/typed/train/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -77,6 +79,11 @@ var (
 	_ clientset.Interface = &Clientset{}
 	_ testing.FakeClient  = &Clientset{}
 )
+
+// ModelV1alpha1 retrieves the ModelV1alpha1Client
+func (c *Clientset) ModelV1alpha1() modelv1alpha1.ModelV1alpha1Interface {
+	return &fakemodelv1alpha1.FakeModelV1alpha1{Fake: &c.Fake}
+}
 
 // TrainV1alpha1 retrieves the TrainV1alpha1Client
 func (c *Clientset) TrainV1alpha1() trainv1alpha1.TrainV1alpha1Interface {

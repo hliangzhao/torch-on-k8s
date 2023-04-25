@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	commonapis "github.com/hliangzhao/torch-on-k8s/pkg/common/apis/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,12 +29,12 @@ func init() {
 	SchemeBuilder.SchemeBuilder.Register(addDefaultingFuncs)
 }
 
-// SchemeGroupVersion is provided for generate client.
-var SchemeGroupVersion = GroupVersion
-
 func addDefaultingFuncs(scheme *runtime.Scheme) error {
 	return RegisterDefaults(scheme)
 }
+
+// SchemeGroupVersion is provided for generate client.
+var SchemeGroupVersion = GroupVersion
 
 // Resource is provided for generated listers.
 func Resource(resource string) schema.GroupResource {
@@ -43,8 +42,9 @@ func Resource(resource string) schema.GroupResource {
 }
 
 // ExtractMetaFieldsFromObject extracts the tasks, status, and scheduling policy form the given torch job.
-func ExtractMetaFieldsFromObject(obj client.Object) (tasks map[commonapis.TaskType]*commonapis.TaskSpec,
-	status *commonapis.JobStatus, schedulingPolicy *commonapis.SchedulingPolicy) {
+// TODO: Should we extract `MinMember` out?
+func ExtractMetaFieldsFromObject(obj client.Object) (tasks map[TaskType]*TaskSpec,
+	status *JobStatus, schedulingPolicy *SchedulingPolicy) {
 
 	torchJob, ok := obj.(*TorchJob)
 	if !ok {

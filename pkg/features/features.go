@@ -27,11 +27,13 @@ func init() {
 	runtime.Must(FeatureGates.Add(supportedFeatures))
 }
 
+// TODO: Figure out how the last two are used.
 const (
 	// GangScheduling enables pluggable gang scheduling for jobs.
+	// TODO: What if gang scheduling is disabled in JobControllerConfig?
 	GangScheduling featuregate.Feature = "GangScheduling"
 
-	// DAGScheduling enables DAG scheduling workflow between different job roles.
+	// DAGScheduling enables DAG scheduling workflow between different task types of a job.
 	DAGScheduling featuregate.Feature = "DAGScheduling"
 
 	// JobCoordinator enables coordinator to coordinate jobs for better fairness and efficiency.
@@ -44,8 +46,8 @@ const (
 
 	// HostNetWithHeadlessSvc constructs connections intra pods leveraging headless service
 	// instead of normal service with different port/targetPort, it bypasses traffic routing
-	// but pod may not find correct host port after fail-overed.
-	// If enable hostnetwork, HostNetWithHeadlessSvc should be disabled.
+	// but pod may not find correct host port after failovered. If enable hostnetwork,
+	// HostNetWithHeadlessSvc should be disabled.
 	HostNetWithHeadlessSvc featuregate.Feature = "HostNetWithHeadlessSvc"
 )
 
@@ -56,7 +58,7 @@ var (
 		GangScheduling:         {Default: true, PreRelease: featuregate.Beta},
 		DAGScheduling:          {Default: true, PreRelease: featuregate.Beta},
 		TorchLocalMasterAddr:   {Default: true, PreRelease: featuregate.Beta},
-		JobCoordinator:         {Default: true, PreRelease: featuregate.Alpha},
+		JobCoordinator:         {Default: true, PreRelease: featuregate.Beta},
 		HostNetWithHeadlessSvc: {Default: false, PreRelease: featuregate.Alpha},
 	}
 )
