@@ -28,10 +28,11 @@ type ModelSpec struct {
 
 // VersionInfo describes the version info of Model.
 type VersionInfo struct {
-	// The name of the latest ModelVersion.
+	// The name of the latest ModelVersion associated with this Model.
 	ModelVersion string `json:"modelVersion,omitempty"`
-	// The image name of the latest model,  e.g. "docker.io/some-model:v1".
-	ImageName string `json:"imageName,omitempty"`
+	// The image name of the latest model: ImageRepo:ImageTag, e.g. "docker.io/some-model:v1".
+	// Image should be the same with the associated ModelVersion.Status.Image.
+	Image string `json:"imageName,omitempty"`
 }
 
 // ModelStatus defines the observed state of Model.

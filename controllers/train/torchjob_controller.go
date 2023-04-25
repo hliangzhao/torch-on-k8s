@@ -19,6 +19,7 @@ package train
 import (
 	"context"
 	"fmt"
+	modelv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/model/v1alpha1"
 	trainv1alpha1 "github.com/hliangzhao/torch-on-k8s/apis/train/v1alpha1"
 	"github.com/hliangzhao/torch-on-k8s/controllers/common"
 	"github.com/hliangzhao/torch-on-k8s/pkg/coordinator"
@@ -227,30 +228,25 @@ func (r *TorchJobReconciler) GetGroupName() string {
 // GetNodeForModelOutput returns the node name on which the trained model
 // of the corresponding torch training job will be saved.
 func (r *TorchJobReconciler) GetNodeForModelOutput(pods []*corev1.Pod) (nodeName string) {
-	// TODO: Here we replace the default node selection with a heuristic.
-	//  More node selection algorithms can be implemented in future for specified scenarios.
-	nodeName, err := getMostAvailableStorageNode()
-	if err == nil {
-		log.Info("select the node with the most available storage for model output", "NodeName", nodeName)
-		return nodeName
-	} else {
-		log.Info("getMostAvailableStorageNode run failed, select node where master task type is placed for model output")
-		for _, pod := range pods {
-			taskType := pod.Labels[trainv1alpha1.LabelTaskType]
-			index, _ := strconv.Atoi(pod.Labels[trainv1alpha1.LabelTaskIndex])
-			if taskType == strings.ToLower(string(trainv1alpha1.TaskTypeTorchMaster)) && index == 0 {
-				log.Info("node %s is selected for model output", pod.Spec.NodeName)
-				return pod.Spec.NodeName
-			}
+	// NOTE: I try to replace the node with the result of the best node selection algorithm but failed.
+	// The reason is that the if the node is not the node where the pod runs on, the host path is illegal.
+	// Thus, just return back to the default node where the master task pod is placed.
+	for _, pod := range pods {
+		taskType := pod.Labels[trainv1alpha1.LabelTaskType]
+		taskIndex, _ := strconv.Atoi(pod.Labels[trainv1alpha1.LabelTaskIndex])
+		if taskType == strings.ToLower(string(trainv1alpha1.TaskTypeTorchMaster)) && taskIndex == 0 {
+			log.Info("select %s for model output", pod.Spec.NodeName)
+			return pod.Spec.NodeName
 		}
-		log.Info(fmt.Sprintf("no master task type, select node %v for model output", pods[0].Spec.NodeName))
-		return pods[0].Spec.NodeName
 	}
+	log.Info("no master task type, select node %s for model output", pods[0].Spec.NodeName)
+	return pods[0].Spec.NodeName
 }
 
 // getMostAvailableStorageNode returns the node with the most available storage capacity with node affinity considered.
 // If at least one node is labeled with "fast for storage", we will select the node with the most available storage capacity.
 // Otherwise, we will select the node with the most available storage capacity from all nodes.
+// NOTE: This func is temporarily deprecated.
 func getMostAvailableStorageNode() (string, error) {
 	var (
 		mostAvailNode string
@@ -269,7 +265,7 @@ func getMostAvailableStorageNode() (string, error) {
 
 	// consider the nodes with label tagged first
 	nodeSelector := &metav1.LabelSelector{
-		MatchLabels: map[string]string{trainv1alpha1.LabelNodeStorageType: trainv1alpha1.LabelNodeStorageTypeFast},
+		MatchLabels: map[string]string{modelv1alpha1.LabelNodeStorageType: modelv1alpha1.LabelNodeStorageTypeFast},
 	}
 	nodeList, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
 		LabelSelector: labels.Set(nodeSelector.MatchLabels).String(),

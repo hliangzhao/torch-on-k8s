@@ -29,41 +29,37 @@ type NFS struct {
 	// The path under which the model is stored, e.g. /models/my_model1
 	Path string `json:"path,omitempty"`
 	// The mounted path inside the container.
-	// The training code is expected to export the model artifacts under this path,
-	// such as storing the tensorflow saved_model.
+	// The model artifact is expected to export to this path.
 	MountPath string `json:"mountPath,omitempty"`
 }
 
-// LocalStorage defines the local storage for storing the model version.
-// For a distributed training job, the nodeName will be the node where the
-// chief/master worker run to export the model.
+// LocalStorage represents the local storage.
+// The model artifact will be saved into the node where the master pod runs on.
 type LocalStorage struct {
+	// The name of the node for storing the model.
+	// +required
+	NodeName string `json:"nodeName,omitempty"`
 	// The local host path to export the model.
 	// +required
 	Path string `json:"path,omitempty"`
 	// The mounted path inside the container.
-	// The training code is expected to export the model artifacts under this path.
+	// The model artifact is expected to export to this path.
 	MountPath string `json:"mountPath,omitempty"`
-	// The name of the node for storing the model.
-	// +required
-	NodeName string `json:"nodeName,omitempty"`
 }
 
 // Storage describes how the output model saved.
 type Storage struct {
-	// NFS represents the nas storage
+	// NFS represents the network-based storage.
 	NFS *NFS `json:"nfs,omitempty"`
-	// LocalStorage represents the local host storage
+	// LocalStorage represents the local storage.
 	LocalStorage *LocalStorage `json:"localStorage,omitempty"`
 }
 
 // ModelVersionSpec defines the spec of ModelVersion.
-// Each time a new ModelVersion crd is created, the corresponding controller
-// will create an image that incorporates the model.
 type ModelVersionSpec struct {
-	// The model name for this ModelVersion
+	// The name of Model resource that this ModelVersion is associated with.
 	// +required
-	ModelName string `json:"modelName,omitempty"`
+	Model string `json:"modelName,omitempty"`
 	// CreatedBy indicates the entity that creates the model version. e.g. the name of the
 	// torchjob that creates the ModelVersion, or the name of the user that creates the ModelVersion.
 	// +optional
@@ -94,15 +90,12 @@ const (
 
 // ModelVersionStatus defines the observed state of ModelVersion.
 type ModelVersionStatus struct {
-	// The image name of the model version.
+	// The image name of the model version (Spec.ImageRepo:Spec.ImageTag).
 	Image string `json:"image,omitempty"`
-
 	// ImageBuildPhase is the phase of the image building process.
 	ImageBuildPhase ImageBuildPhase `json:"imageBuildPhase,omitempty"`
-
 	// FinishTime is the time when image building is finished.
 	FinishTime *metav1.Time `json:"finishTime,omitempty"`
-
 	// Any message associated with the building process.
 	Message string `json:"message,omitempty"`
 }

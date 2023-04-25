@@ -88,15 +88,6 @@ const (
 	FinalizerPreemptProtector = ProjectPrefix + "/preempt-protector"
 )
 
-/* Local storage related. The following labels are used when local storage mode is chosen for model saving. */
-
-type NodeStorageType string
-
-const (
-	LabelNodeStorageType     = ProjectPrefix + "/storage-type"
-	LabelNodeStorageTypeFast = "fast"
-)
-
 /* Torch job specified constants. */
 
 const (

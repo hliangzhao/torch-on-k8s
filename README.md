@@ -10,10 +10,11 @@ Supported features:
   selects a queue and a torchjob in the queue to do the reconciliation).
 * Elastic scaling of torchjob task replicas.
 
+Fixed:
+* Node selection for local storage violates the usage of host path. Remove it temporarily.
+
 Something new compared with [kubedl](https://github.com/kubedl-io/kubedl):
 
-* A [greedy heuristic](https://github.com/hliangzhao/torch-on-k8s/blob/cb0dd4d1dd5afa830426e97112d16ba1de49f4e9/controllers/train/torchjob_controller.go#L230) for node selection to maximize the storage utilization and performance for the saving of 
-  output models (designed for local storage).
 * A [weighted-round-robin (WRR)](https://github.com/hliangzhao/torch-on-k8s/blob/cb0dd4d1dd5afa830426e97112d16ba1de49f4e9/pkg/coordinator/core/policy.go#L89) algorithm implementation for queue selections in job coordination.
 * The ability of setting `MinMember` is exported to users for Gang scheduling when DAG scheduling is enabled. Specifically, 
   `MinMember` is added to `TorchJobSpec`, and the related structs and functions are revised correspondingly (TODO: Add link). 

@@ -32,6 +32,7 @@ func init() {
 	StorageProviders["NFS"] = nfs.NewNFSProvider()
 }
 
+// GetStorageProvider returns the storage provider based on the adopted storage type (local storage or nfs).
 func GetStorageProvider(modelstorage *modelv1alpha1.Storage) storage.Storage {
 	if modelstorage.NFS != nil {
 		return StorageProviders["NFS"]

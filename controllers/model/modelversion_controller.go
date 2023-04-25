@@ -42,7 +42,7 @@ import (
 )
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *ModelVersionReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	var predicates = predicate.Funcs{
 		// we only care about the Create event of a modelversion resource
 		CreateFunc: func(e event.CreateEvent) bool {
@@ -59,8 +59,8 @@ func (r *ModelVersionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func NewModelVersionReconciler(manager ctrl.Manager, _ common.JobControllerConfiguration) *ModelVersionReconciler {
-	return &ModelVersionReconciler{
+func NewModelVersionReconciler(manager ctrl.Manager, _ common.JobControllerConfiguration) *Reconciler {
+	return &Reconciler{
 		Client: manager.GetClient(),
 		Scheme: manager.GetScheme(),
 	}
@@ -68,11 +68,11 @@ func NewModelVersionReconciler(manager ctrl.Manager, _ common.JobControllerConfi
 
 var (
 	log                      = logf.Log.WithName("modelversion-controller")
-	_   reconcile.Reconciler = &ModelVersionReconciler{}
+	_   reconcile.Reconciler = &Reconciler{}
 )
 
-// ModelVersionReconciler reconciles a ModelVersion object
-type ModelVersionReconciler struct {
+// Reconciler reconciles a ModelVersion object
+type Reconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
@@ -87,7 +87,7 @@ type ModelVersionReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(_ context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// fetch the request modelversion resource from the cluster
 	mv := &modelv1alpha1.ModelVersion{}
 	err := r.Get(context.Background(), req.NamespacedName, mv)
@@ -103,7 +103,7 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// if no need to build the image, return directly
 	if mv.Status.ImageBuildPhase == modelv1alpha1.ImageBuildSucceeded ||
 		mv.Status.ImageBuildPhase == modelv1alpha1.ImageBuildFailed {
-		log.Info(fmt.Sprintf("image build %s", mv.Status.ImageBuildPhase), "ModelVersion", mv.Name)
+		log.Info(fmt.Sprintf("image build %s", mv.Status.ImageBuildPhase), "modelversion", mv.Name)
 		return reconcile.Result{}, nil
 	}
 
@@ -112,18 +112,20 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// if the corresponding model does not exist, create it
 	model := &modelv1alpha1.Model{}
-	err = r.Get(context.Background(), types.NamespacedName{Namespace: mv.Namespace, Name: mv.Spec.ModelName}, model)
+	err = r.Get(context.Background(), types.NamespacedName{Namespace: mv.Namespace, Name: mv.Spec.Model}, model)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			log.Info("create Model " + mv.Spec.ModelName)
-			model := &modelv1alpha1.Model{
+			log.Info("create model " + mv.Spec.Model)
+			model = &modelv1alpha1.Model{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: mv.Namespace,
-					Name:      mv.Spec.ModelName,
+					Name:      mv.Spec.Model,
 				},
 				Spec:   modelv1alpha1.ModelSpec{},
 				Status: modelv1alpha1.ModelStatus{},
 			}
+
+			// associate the latest ModelVersion to the Model
 			model.Status.LatestVersion = &modelv1alpha1.VersionInfo{
 				ModelVersion: mv.Name,
 			}
@@ -134,7 +136,7 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			}
 			exists := false
 			for _, ref := range mv.OwnerReferences {
-				if ref.Kind == "Model" && ref.UID == model.UID {
+				if ref.Kind == model.Kind && ref.UID == model.UID {
 					exists = true
 					break
 				}
@@ -164,11 +166,11 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	pvc := &corev1.PersistentVolumeClaim{}
 
 	if mv.Spec.Storage == nil {
-		log.Error(err, "storage is undefined", "ModelVersion", mv.Name)
+		log.Error(err, "storage is undefined", "modelversion", mv.Name)
 		return reconcile.Result{}, nil
 	} else {
 		if err = r.createPVAndPVCForModelVersion(mv, pv, pvc); err != nil {
-			log.Error(err, "failed to create pv/pvc for model version", "ModelVersion", mv.Name)
+			log.Error(err, "failed to create pv/pvc", "modelversion", mv.Name)
 			return reconcile.Result{Requeue: true}, err
 		}
 	}
@@ -176,7 +178,7 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// check if the pvc is bound to pv
 	if pvc.Status.Phase != corev1.ClaimBound {
 		// wait for the pv and pvc to be bound
-		log.Info("waiting for pv and pvc to be bound", "ModelVersion", mv.Name, "pv", pv.Name, "pvc", pvc.Name)
+		log.Info("waiting for pv and pvc to be bound", "modelversion", mv.Name, "pv", pv.Name, "pvc", pvc.Name)
 		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
 	}
 
@@ -184,7 +186,7 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	mvStatus := mv.Status.DeepCopy()
 
-	// create a kaniko pod to build the model image, take the first 5 chars as the version ID if tag not provided
+	// create a Kaniko pod to build the model image, take the first 5 chars as the version ID if tag is not provided
 	versionID := string(mv.UID[:5])
 	if len(mv.Spec.ImageTag) > 0 {
 		versionID = mv.Spec.ImageTag
@@ -199,7 +201,7 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			mvStatus.Message = "Image building started."
 
 			// create a configmap resource in cluster which includes the dockerfile command
-			if err = r.createDockerfileIfNotExists(model, mv); err != nil {
+			if err = r.createDockerfileIfNotExists(mv); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -231,7 +233,7 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			modelCopy := model.DeepCopy()
 			modelCopy.Status.LatestVersion = &modelv1alpha1.VersionInfo{
 				ModelVersion: mv.Name,
-				ImageName:    mvStatus.Image,
+				Image:        mvStatus.Image,
 			}
 			if err = r.Status().Update(context.Background(), modelCopy); err != nil {
 				log.Error(err, "failed to update model", "Model", model.Name)
@@ -275,12 +277,14 @@ func (r *ModelVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
-// createDockerfileIfNotExists creates the dockerfile configmap.
-func (r *ModelVersionReconciler) createDockerfileIfNotExists(model *modelv1alpha1.Model,
-	modelVersion *modelv1alpha1.ModelVersion) error {
-
+// createDockerfileIfNotExists creates the dockerfile configmap. The name of the configmap is "dockerfile",
+// the data of the configmap is the commands inside the dockerfile. What the commands do is very simple:
+// Copy the model artifact from the mounted pvc to some path inside the image. This dockerfile configmap
+// can be reused by all the torchjobs. Thus, no model or modelversion specified info is used when creating
+// them.
+func (r *Reconciler) createDockerfileIfNotExists(modelVersion *modelv1alpha1.ModelVersion) error {
 	dockerfile := &corev1.ConfigMap{}
-	err := r.Get(context.Background(), types.NamespacedName{Namespace: model.Namespace, Name: "dockerfile"}, dockerfile)
+	err := r.Get(context.Background(), types.NamespacedName{Namespace: modelVersion.Namespace, Name: "dockerfile"}, dockerfile)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			dockerfile = &corev1.ConfigMap{
@@ -309,7 +313,7 @@ COPY build/ %s`, modelv1alpha1.DefaultModelPathInImage),
 // 1. mount dockerfile configmap into /workspace/dockerfile.
 // 2. mount build source pvc into /workspace/build.
 // 3. mount dockerconfig secret as /kaniko/.docker/config.json.
-// The image build pod will create a container that includes artifacts under "/workspace/build", based on the dockerfile.
+// The image build pod will create an image that includes artifacts under "/workspace/build", based on the dockerfile.
 func createImgBuildPod(modelVersion *modelv1alpha1.ModelVersion, pvc *corev1.PersistentVolumeClaim,
 	imgBuildPodName string, newImage string) *corev1.Pod {
 
@@ -401,33 +405,34 @@ func createImgBuildPod(modelVersion *modelv1alpha1.ModelVersion, pvc *corev1.Per
 }
 
 // createPVAndPVCForModelVersion creates pv and its pvc to be bound in cluster for the given modelversion.
-// LocalStorage is treated different from remote storage.
-// For local storage, each node will be provisioned with its own pv and pvc, and append nodeName
-// as the pv/pvc name, whereas remote storage only has a single pv and pvc.
-func (r *ModelVersionReconciler) createPVAndPVCForModelVersion(modelVersion *modelv1alpha1.ModelVersion,
+// LocalStorage is treated different from remote storage. For local storage, each node will be provisioned
+// with its own pv and pvc, and append nodeName as the pv/pvc name, whereas remote storage only has a single
+// pv and pvc.
+func (r *Reconciler) createPVAndPVCForModelVersion(modelVersion *modelv1alpha1.ModelVersion,
 	pv *corev1.PersistentVolume, pvc *corev1.PersistentVolumeClaim) (err error) {
 
-	// get pv name
+	// get pv name (different for local storage and remote storage)
 	pvName := ""
 	if modelVersion.Spec.Storage.LocalStorage != nil {
 		if modelVersion.Spec.Storage.LocalStorage.NodeName != "" {
-			pvName = getModelVersionPVNameByNode(modelVersion.Name, modelVersion.Spec.Storage.LocalStorage.NodeName)
+			pvName = setPVNameForLocalStorage(modelVersion.Name, modelVersion.Spec.Storage.LocalStorage.NodeName)
 		} else {
-			return fmt.Errorf("modelversion has no node name set for local storage, ModelVersion name %s", modelVersion.Name)
+			return fmt.Errorf("no node name set for local storage when setting pv, modeversion: %s", modelVersion.Name)
 		}
 	} else {
-		pvName = getModelVersionPVName(modelVersion.Name)
+		pvName = setPVNameForNFS(modelVersion.Name)
 	}
+
 	// create pv if non-exist
 	err = r.Get(context.Background(), types.NamespacedName{Name: pvName}, pv)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// create a new pv for this particular model version
 			storageProvider := registry.GetStorageProvider(modelVersion.Spec.Storage)
 			pv = storageProvider.CreatePersistentVolume(modelVersion.Spec.Storage, pvName)
 			if pv.OwnerReferences == nil {
 				pv.OwnerReferences = make([]metav1.OwnerReference, 0)
 			}
+			// this pv is controlled by the modelversion which is going to use it
 			pv.OwnerReferences = append(pv.OwnerReferences, metav1.OwnerReference{
 				APIVersion: modelVersion.APIVersion,
 				Kind:       modelVersion.Kind,
@@ -436,30 +441,35 @@ func (r *ModelVersionReconciler) createPVAndPVCForModelVersion(modelVersion *mod
 			})
 			err = r.Create(context.Background(), pv)
 			if err != nil {
-				log.Info("failed to create pv for modelversion", "pv", pv.Name, "ModelVersion", modelVersion.Name)
+				log.Info("failed to create pv for modelversion",
+					"modelversion", modelVersion.Name, "pv", pv.Name)
 				return err
 			}
-			log.Info("created pv for modelversion", "pv", pv.Name, "ModelVersion", modelVersion.Name)
+			log.Info("successfully create pv for modelversion",
+				"modelversion", modelVersion.Name, "pv", pv.Name)
 		} else {
+			log.Error(err, fmt.Sprintf("modelversion %s failed to get pv", modelVersion.Name))
 			return err
 		}
 	}
 
-	// get pvc name
+	// get pvc name (different for local storage and remote storage)
 	pvcName := ""
 	if modelVersion.Spec.Storage.LocalStorage != nil {
 		if modelVersion.Spec.Storage.LocalStorage.NodeName != "" {
-			pvcName = getModelVersionPVClaimNameByNode(modelVersion.Name, modelVersion.Spec.Storage.LocalStorage.NodeName)
+			pvcName = setPVCNameForLocalStorage(modelVersion.Name, modelVersion.Spec.Storage.LocalStorage.NodeName)
 		} else {
-			return fmt.Errorf("both model and modelversion don't have node name set for local storage, ModelVersion name %s", modelVersion.Name)
+			return fmt.Errorf("no node name set for local storage when setting pvc, modeversion: %s", modelVersion.Name)
 		}
 	} else {
-		pvcName = getModelVersionPVClaimName(modelVersion.Name)
+		pvcName = setPVCNameForNFS(modelVersion.Name)
 	}
+
 	// create pvc if non-exist
 	err = r.Get(context.Background(), types.NamespacedName{Namespace: modelVersion.Namespace, Name: pvcName}, pvc)
 	if err != nil {
 		if errors.IsNotFound(err) {
+			// use the same class name to bound the corresponding pv
 			className := ""
 			pvc = &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{
@@ -481,6 +491,7 @@ func (r *ModelVersionReconciler) createPVAndPVCForModelVersion(modelVersion *mod
 			if pvc.OwnerReferences == nil {
 				pvc.OwnerReferences = make([]metav1.OwnerReference, 0)
 			}
+			// this pvc is controlled by the modelversion which is going to use it
 			pvc.OwnerReferences = append(pvc.OwnerReferences, metav1.OwnerReference{
 				APIVersion: modelVersion.APIVersion,
 				Kind:       modelVersion.Kind,
@@ -490,31 +501,34 @@ func (r *ModelVersionReconciler) createPVAndPVCForModelVersion(modelVersion *mod
 
 			err = r.Create(context.Background(), pvc)
 			if err != nil {
-				log.Info("failed to create pvc for modelversion", "pvc", pvc.Name, "ModelVersion", modelVersion.Name)
+				log.Info("failed to create pvc for modelversion",
+					"modelversion", modelVersion.Name, "pvc", pvc.Name)
 				return err
 			}
-			log.Info("created pvc for modelversion", "pvc", pvc.Name, "ModelVersion", modelVersion.Name)
+			log.Info("successfully create pvc for modelversion",
+				"modelversion", modelVersion.Name, "pvc", pvc.Name)
 		} else {
-			log.Error(err, fmt.Sprintf("modelversion %s failed too get pvc", modelVersion.Name))
+			log.Error(err, fmt.Sprintf("modelversion %s failed to get pvc", modelVersion.Name))
 			return err
 		}
 	}
+
 	return err
 }
 
-func getModelVersionPVName(modelName string) string {
+func setPVNameForNFS(modelName string) string {
 	return "mv-pv-" + modelName
 }
 
-func getModelVersionPVClaimName(modelName string) string {
+func setPVCNameForNFS(modelName string) string {
 	return "mv-pvc-" + modelName
 }
 
-func getModelVersionPVNameByNode(modelName string, nodeName string) string {
+func setPVNameForLocalStorage(modelName string, nodeName string) string {
 	return "mv-pv-" + modelName + "-" + nodeName
 }
 
-func getModelVersionPVClaimNameByNode(modelName string, nodeName string) string {
+func setPVCNameForLocalStorage(modelName string, nodeName string) string {
 	return "mv-pvc-" + modelName + "-" + nodeName
 }
 
