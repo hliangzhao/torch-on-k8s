@@ -264,7 +264,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 		// non-aimaster tasks should wait until the aimaster task is ready
 		if utils.ContainsTaskType(tasks, trainv1alpha1.TaskTypeAIMaster) && taskType != trainv1alpha1.TaskTypeAIMaster &&
 			job.GetAnnotations()["aimaster"] != "ready" {
-			klog.Infof("aimaster is not ready and reconciling is frozen.", "job", jobName)
+			klog.Infof("aimaster is not ready and reconciling is frozen, job: %v", jobName)
 			return reconcile.Result{}, nil
 		}
 

@@ -49,9 +49,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: ModelVersionSpec defines the desired state of ModelVersion.
-              Each time a new ModelVersion crd is created, the corresponding controller
-              will create an image that incorporates the model.
+            description: ModelVersionSpec defines the spec of ModelVersion.
             properties:
               createdBy:
                 description: CreatedBy indicates the entity that creates the model
@@ -70,59 +68,59 @@ spec:
                   5 digits of this ModelVersion object UID will be used as image tag.
                 type: string
               modelName:
-                description: The model name for this ModelVersion
+                description: The name of Model resource that this ModelVersion is
+                  associated with.
                 type: string
               storage:
                 description: Storage is the location where this ModelVersion is stored.
                 properties:
                   localStorage:
-                    description: LocalStorage represents the local host storage
+                    description: LocalStorage represents the local storage.
                     properties:
                       mountPath:
-                        description: The mounted path inside the container. The training
-                          code is expected to export the model artifacts under this
-                          path.
+                        description: The mounted path inside the container. The model
+                          artifact is expected to be exported to this path.
                         type: string
                       nodeName:
                         description: The name of the node for storing the model.
                         type: string
                       path:
-                        description: The local host path to export the model.
+                        description: The local host path under which the model is
+                          stored in the node, e.g. /models/.
                         type: string
                     type: object
                   nfs:
-                    description: NFS represents the nas storage
+                    description: NFS represents the network-based storage.
                     properties:
                       mountPath:
-                        description: The mounted path inside the container. The training
-                          code is expected to export the model artifacts under this
-                          path, such as storing the tensorflow saved_model.
+                        description: The mounted path inside the pod container. The
+                          model artifact is expected to be exported to this path.
                         type: string
                       path:
-                        description: The path under which the model is stored, e.g.
-                          /models/my_model1
+                        description: The path under which the model is stored in the
+                          nfs server, e.g. /models/.
                         type: string
                       server:
-                        description: NFS server address
+                        description: NFS is the nfs server's IP address.
                         type: string
                     type: object
                 type: object
             type: object
           status:
-            description: ModelVersionStatus defines the observed state of ModelVersion
+            description: ModelVersionStatus defines the observed state of ModelVersion.
             properties:
               finishTime:
                 description: FinishTime is the time when image building is finished.
                 format: date-time
                 type: string
               image:
-                description: The image name of the model version
+                description: The image name of the model version (Spec.ImageRepo:Spec.ImageTag).
                 type: string
               imageBuildPhase:
-                description: ImageBuildPhase is the phase of the image building process
+                description: ImageBuildPhase is the phase of the image building process.
                 type: string
               message:
-                description: Any message associated with the building process
+                description: Any message associated with the building process.
                 type: string
             type: object
         type: object

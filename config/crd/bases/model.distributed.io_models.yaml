@@ -22,7 +22,7 @@ spec:
     - jsonPath: .status.latestVersion.modelVersion
       name: Latest-Version
       type: string
-    - jsonPath: .status.latestVersion.imageName
+    - jsonPath: .status.latestVersion.image
       name: Latest-Image
       type: string
     name: v1alpha1
@@ -43,24 +43,27 @@ spec:
           metadata:
             type: object
           spec:
-            description: ModelSpec defines the desired state of Model
+            description: ModelSpec defines the desired state of Model.
             properties:
               description:
-                description: Description is an arbitrary string that describes what
-                  this model for.
+                description: Description is a string that describes what this model
+                  for.
                 type: string
             type: object
           status:
-            description: ModelStatus defines the observed state of Model
+            description: ModelStatus defines the observed state of Model.
             properties:
               latestVersion:
-                description: LatestVersion indicates the latest ModelVersion
+                description: LatestVersion indicates the latest VersionInfo.
                 properties:
                   imageName:
-                    description: The image name of the latest model,  e.g. "docker.io/some-model:v1"
+                    description: The image name of the latest model, in the form of
+                      ImageRepo:ImageTag. For example, "docker.io/some-model:v1".
+                      Image is the same with the associated ModelVersion's `Status.Image`.
                     type: string
                   modelVersion:
-                    description: The name of the latest ModelVersion
+                    description: The name of the latest ModelVersion associated with
+                      this Model.
                     type: string
                 type: object
             type: object

@@ -193,7 +193,7 @@ type TorchJobSpec struct {
 	// when both DAG scheduling and Gang scheduling are enabled. If not set, MinMembers
 	// will be NumTasks for each task type in default.
 	// +optional
-	MinMembers map[TaskType]*int32
+	MinMembers map[TaskType]*int32 `json:"minMembers,omitempty"`
 	// ModelVersion describes the final output model of the training torchjob.
 	// +optional
 	ModelVersion *modelv1alpha1.ModelVersion `json:"modelVersion,omitempty"`

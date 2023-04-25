@@ -35,7 +35,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: TorchJob is the Schema for the torchjobs API
+        description: TorchJob is the Schema for the torchjobs API.
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -69,10 +69,22 @@ spec:
                 type: integer
               clenPodPolicy:
                 description: CleanPodPolicy defines the policy to kill pods after
-                  the job completes. Default to CleanPodPolicyRunning.
+                  the job completes. Default to CleanPodPolicyNone.
                 type: string
+              enableTorchElastic:
+                description: TorchElastic is enabled or not.
+                type: boolean
+              minMembers:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                description: MinMembers describes the minimal number of successfully
+                  running tasks of each type when both DAG scheduling and Gang scheduling
+                  are enabled. If not set, MinMembers will be NumTasks for each task
+                  type in default.
+                type: object
               modelVersion:
-                description: ModelVersion represents the final output model of the
+                description: ModelVersion describes the final output model of the
                   training torchjob.
                 properties:
                   apiVersion:
@@ -90,9 +102,7 @@ spec:
                   metadata:
                     type: object
                   spec:
-                    description: ModelVersionSpec defines the desired state of ModelVersion.
-                      Each time a new ModelVersion crd is created, the corresponding
-                      controller will create an image that incorporates the model.
+                    description: ModelVersionSpec defines the spec of ModelVersion.
                     properties:
                       createdBy:
                         description: CreatedBy indicates the entity that creates the
@@ -113,50 +123,51 @@ spec:
                           UID will be used as image tag.
                         type: string
                       modelName:
-                        description: The model name for this ModelVersion
+                        description: The name of Model resource that this ModelVersion
+                          is associated with.
                         type: string
                       storage:
                         description: Storage is the location where this ModelVersion
                           is stored.
                         properties:
                           localStorage:
-                            description: LocalStorage represents the local host storage
+                            description: LocalStorage represents the local storage.
                             properties:
                               mountPath:
                                 description: The mounted path inside the container.
-                                  The training code is expected to export the model
-                                  artifacts under this path.
+                                  The model artifact is expected to be exported to
+                                  this path.
                                 type: string
                               nodeName:
                                 description: The name of the node for storing the
                                   model.
                                 type: string
                               path:
-                                description: The local host path to export the model.
+                                description: The local host path under which the model
+                                  is stored in the node, e.g. /models/.
                                 type: string
                             type: object
                           nfs:
-                            description: NFS represents the nas storage
+                            description: NFS represents the network-based storage.
                             properties:
                               mountPath:
-                                description: The mounted path inside the container.
-                                  The training code is expected to export the model
-                                  artifacts under this path, such as storing the tensorflow
-                                  saved_model.
+                                description: The mounted path inside the pod container.
+                                  The model artifact is expected to be exported to
+                                  this path.
                                 type: string
                               path:
-                                description: The path under which the model is stored,
-                                  e.g. /models/my_model1
+                                description: The path under which the model is stored
+                                  in the nfs server, e.g. /models/.
                                 type: string
                               server:
-                                description: NFS server address
+                                description: NFS is the nfs server's IP address.
                                 type: string
                             type: object
                         type: object
                     type: object
                   status:
                     description: ModelVersionStatus defines the observed state of
-                      ModelVersion
+                      ModelVersion.
                     properties:
                       finishTime:
                         description: FinishTime is the time when image building is
@@ -164,26 +175,30 @@ spec:
                         format: date-time
                         type: string
                       image:
-                        description: The image name of the model version
+                        description: The image name of the model version (Spec.ImageRepo:Spec.ImageTag).
                         type: string
                       imageBuildPhase:
                         description: ImageBuildPhase is the phase of the image building
-                          process
+                          process.
                         type: string
                       message:
-                        description: Any message associated with the building process
+                        description: Any message associated with the building process.
                         type: string
                     type: object
                 type: object
               schedulingPolicy:
+                description: SchedulingPolicy describes the scheduling policy for
+                  a job.
                 properties:
                   minAvailable:
                     description: Indicate the min number of tasks (pods) for Gang
-                      scheduling of a job
+                      scheduling of a job.
                     format: int32
                     type: integer
                   priority:
-                    description: Higher the value, larger the priority
+                    description: Priority of the job. Higher the value, larger the
+                      priority. This value will be used when selecting a job from
+                      the queue.
                     format: int32
                     type: integer
                   priorityClassName:
@@ -193,24 +208,59 @@ spec:
                     type: string
                   queue:
                     description: The name of the queue that this job should be enqueued
-                      into
+                      into.
                     type: string
+                type: object
+              torchElasticPolicy:
+                description: TorchElasticPolicy is the config for torchelastic.
+                properties:
+                  numMaxReplicas:
+                    description: NumMaxReplicas is the maximal number of task replicas
+                      of "Worker". Default to nil.
+                    format: int32
+                    type: integer
+                  numMinReplicas:
+                    description: NumMinReplicas is the minimal number of task replicas
+                      of "Worker". Default to nil.
+                    format: int32
+                    type: integer
+                  numWorkersPerNodePolicy:
+                    description: NProcPerNode is the number of worker tasks on each
+                      single node.
+                    format: int32
+                    type: integer
+                  rendezvousBackend:
+                    description: RendezvousBackend is the backend of the Rendezvous
+                      server. For example, etcd.
+                    type: string
+                  rendezvousEndpoint:
+                    description: RendezvousEndpoint is the address of the Rendezvous
+                      server. For example, ETCD_HOST:ETCD_PORT.
+                    type: string
+                required:
+                - rendezvousBackend
+                - rendezvousEndpoint
                 type: object
               torchTaskSpecs:
                 additionalProperties:
-                  description: TaskSpec is a description of tasks.
+                  description: TaskSpec describes a collection of tasks for a certain
+                    type.
                   properties:
                     numTasks:
+                      description: NumTasks is the number of tasks of this type.
                       format: int32
                       type: integer
                     restartPolicy:
+                      description: The restart policy of these tasks. All the tasks
+                        share the same restart policy.
                       type: string
                     spotTaskSpec:
+                      description: The spot tasks' details of the certain task type.
                       properties:
                         labels:
                           additionalProperties:
                             type: string
-                          description: Extra labels for spot tasks
+                          description: Extra labels for spot tasks.
                           type: object
                         numSpotTasks:
                           description: NumSpotTasks is the number of desired spot
@@ -219,11 +269,15 @@ spec:
                           format: int32
                           type: integer
                         priorityClassName:
+                          description: This field is required if you want to specify
+                            the priority. You must create a corresponding PriorityClass
+                            object. Otherwise, the priority will be zero or default.
                           type: string
                       type: object
                     template:
-                      description: PodTemplateSpec describes the data a pod should
-                        have when created from a template
+                      description: A task wraps only one pod. We use Template to define
+                        the pod template spec of the wrapped pod. For a certain task
+                        type, all the tasks share the same pod template spec.
                       properties:
                         metadata:
                           description: 'Standard object''s metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
@@ -7536,74 +7590,119 @@ spec:
                   type: object
                 description: 'TorchTaskSpecs is a map of TorchTaskType (type) to TorchTaskSpec
                   (value). It specifies the PyTorch cluster configuration. For example,   {     "Master":
-                  TorchTaskSpec,     "Worker": TorchTaskSpec,   }'
+                  Master''s TaskSpec (number of master task must be 1),     "Worker":
+                  Worker''s TaskSpec (number of work tasks can > 1),   } All the tasks
+                  of the same type share the same pod template and restart policy.'
                 type: object
             required:
             - torchTaskSpecs
             type: object
           status:
-            description: JobStatus represents the current observed state of jobs.
+            description: JobStatus describes current observed state of jobs.
             properties:
               completionTime:
-                description: The time the job completes
+                description: CompletionTime is the time the job completes.
                 format: date-time
                 type: string
               conditions:
                 description: Conditions is an array of current observed job conditions.
                 items:
-                  description: JobCondition describes the possible conditions of a
-                    job.
+                  description: JobCondition describes the state of a job at a certain
+                    point. Following https://github.com/kubernetes/api/blob/v0.22.6/apps/v1/types.go#L455.
                   properties:
                     lastTransitionTime:
-                      description: Last time the condition status is transited
+                      description: Last time the condition transitioned from one status
+                        to another.
                       format: date-time
                       type: string
                     lastUpdateTime:
-                      description: Last time the condition is updated
+                      description: The last time this condition was updated.
                       format: date-time
                       type: string
                     message:
+                      description: A human-readable message indicating details about
+                        the transition.
                       type: string
                     reason:
+                      description: The reason for the condition's last transition.
                       type: string
                     status:
-                      description: Whether the condition type is True, or False, or
-                        Unknown
+                      description: Status of the condition, one of True, False, Unknown.
                       type: string
                     type:
+                      description: Type of job condition.
                       type: string
                   required:
                   - status
                   - type
                   type: object
                 type: array
+              elasticScalingStatues:
+                additionalProperties:
+                  description: TorchElasticStatus describes status of torchelastic.
+                  properties:
+                    continue:
+                      description: Whether the job continue scaling or not.
+                      type: boolean
+                    curReplicas:
+                      description: The number of current task replicas of "Worker".
+                      format: int32
+                      type: integer
+                    elasticCondition:
+                      description: Type of elastic condition.
+                      type: string
+                    lastReplicas:
+                      description: Last number of task replicas of "Worker".
+                      format: int32
+                      type: integer
+                    lastUpdateTime:
+                      description: The last time this status was updated.
+                      format: date-time
+                      type: string
+                    message:
+                      description: A human-readable message indicating details about
+                        the transition.
+                      type: string
+                  type: object
+                description: TorchElasticStatuses is a map from TaskType to TorchElasticStatus,
+                  specifies the torchelastic status of each task type.
+                type: object
               modelVersionName:
-                description: ModelVersionName represents the model version name output
-                  by this job run.
+                description: ModelVersionName represents the name of the modelversion
+                  output by this (torch training) job.
                 type: string
               startTime:
-                description: The time the job is acknowledged by controller
+                description: StartTime is the time the job is acknowledged by controller.
                 format: date-time
                 type: string
               taskStatuses:
                 additionalProperties:
+                  description: TaskStatus describes the status of tasks of a certain
+                    task type.
                   properties:
                     active:
+                      description: Active is the number of active tasks of the certain
+                        task type.
                       format: int32
                       type: integer
                     evicted:
-                      description: Evicted is a subset of Failed
+                      description: Evicted is the number of failed tasks of the certain
+                        task type. An Evicted task is also a Failed task.
                       format: int32
                       type: integer
                     failed:
+                      description: Failed is the number of failed tasks of the certain
+                        task type.
                       format: int32
                       type: integer
                     succeed:
+                      description: Succeeded is the number of succeeded tasks of the
+                        certain task type.
                       format: int32
                       type: integer
                   type: object
-                description: TaskStatuses is map of TaskType and TaskStatus, specifies
-                  the status of each replica.
+                description: TaskStatuses is a map of TaskType and TaskStatus, specifies
+                  the status of each task type.
                 type: object
             required:
             - taskStatuses
