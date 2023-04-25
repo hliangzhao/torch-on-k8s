@@ -24,12 +24,12 @@ import (
 
 // NFS represents the network-based storage.
 type NFS struct {
-	// NFS server address
+	// NFS is the nfs server's IP address.
 	Server string `json:"server,omitempty"`
-	// The path under which the model is stored, e.g. /models/my_model1
+	// The path under which the model is stored in the nfs server, e.g. /models/.
 	Path string `json:"path,omitempty"`
-	// The mounted path inside the container.
-	// The model artifact is expected to export to this path.
+	// The mounted path inside the pod container.
+	// The model artifact is expected to be exported to this path.
 	MountPath string `json:"mountPath,omitempty"`
 }
 
@@ -39,11 +39,11 @@ type LocalStorage struct {
 	// The name of the node for storing the model.
 	// +required
 	NodeName string `json:"nodeName,omitempty"`
-	// The local host path to export the model.
+	// The local host path under which the model is stored in the node, e.g. /models/.
 	// +required
 	Path string `json:"path,omitempty"`
 	// The mounted path inside the container.
-	// The model artifact is expected to export to this path.
+	// The model artifact is expected to be exported to this path.
 	MountPath string `json:"mountPath,omitempty"`
 }
 

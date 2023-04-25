@@ -83,7 +83,7 @@ func (np *Provider) AddModelVolumeToPodSpec(modelstorage *modelv1alpha1.Storage,
 	}
 }
 
-// GetModelMountPath returns the mount path inside each container of the pod where the model artifact will be stored.
+// GetModelMountPath returns the mount path where the model artifact will be stored.
 func (np *Provider) GetModelMountPath(mv *modelv1alpha1.Storage) string {
 	return mv.NFS.MountPath
 }

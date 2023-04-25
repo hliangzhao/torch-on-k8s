@@ -223,7 +223,7 @@ func (v *volcano) generatePodGroupsByJob(apiVersion, kind, name, namespace strin
 	// TODO: This is buggy when schedPolicy.MinAvailable is set but MinResources is not updated!
 	//  Here jobResource is the total resource requests of the job (by subtracting aimaster).
 	//  To fix this, we need to add a new field named `MinResources` for `trainv1alpha1.SchedulingPolicy`.
-	//  Will fix this later.
+	//  Will try to fix this later.
 	pg.Spec.MinResources = &jobResource
 
 	return &volcanoapisv1beta1.PodGroupList{Items: []volcanoapisv1beta1.PodGroup{pg}}

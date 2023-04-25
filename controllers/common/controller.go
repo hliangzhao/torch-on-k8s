@@ -39,7 +39,8 @@ var (
 	// GetJobKey is the short name to cache.DeletionHandlingMetaNamespaceKeyFunc.
 	// IndexerInformer uses a delta queue, therefore for deletions we have to use this
 	// key function, but it should be just fine for non-deletion events.
-	// TODO: Figure out why it is used in this way.
+	// GetJobKey will be frequently used to identify the only job in cluster
+	// for reconciliation.
 	GetJobKey = cache.DeletionHandlingMetaNamespaceKeyFunc
 )
 
@@ -86,11 +87,8 @@ type JobController struct {
 
 	GangScheduler gangscheduler.GangScheduler
 
-	// TODO: Why not add an entity called ElasticScaler and implement the corresponding functions?
-
 	// A TTLCache of pod/services creates/deletes each job expects to see.
 	// We use Job namespaced name + TaskType + pods/services name as an expectation key,
-	// TODO: Check: for torchjob, how the expectation looks like?
 	Expectations k8scontroller.ControllerExpectationsInterface
 
 	// BackoffStatesQueue is a rate limited queue and record backoff counts for
@@ -117,7 +115,6 @@ type JobController struct {
 
 	// APIReader knows how to read and list Kubernetes objects bypass cache to avoid retrieving
 	// stale status for the reason of etcd slow-watch.
-	// TODO: When APIReader is used?
 	APIReader client.Reader
 }
 

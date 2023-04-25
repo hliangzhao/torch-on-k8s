@@ -30,8 +30,9 @@ type ModelSpec struct {
 type VersionInfo struct {
 	// The name of the latest ModelVersion associated with this Model.
 	ModelVersion string `json:"modelVersion,omitempty"`
-	// The image name of the latest model: ImageRepo:ImageTag, e.g. "docker.io/some-model:v1".
-	// Image should be the same with the associated ModelVersion.Status.Image.
+	// The image name of the latest model, in the form of ImageRepo:ImageTag.
+	// For example, "docker.io/some-model:v1". Image is the same with the
+	// associated ModelVersion's `Status.Image`.
 	Image string `json:"imageName,omitempty"`
 }
 
@@ -48,7 +49,7 @@ type ModelStatus struct {
 // +kubebuilder:resource:shortName=mo
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:printcolumn:name="Latest-Version",type=string,JSONPath=`.status.latestVersion.modelVersion`
-// +kubebuilder:printcolumn:name="Latest-Image",type=string,JSONPath=`.status.latestVersion.imageName`
+// +kubebuilder:printcolumn:name="Latest-Image",type=string,JSONPath=`.status.latestVersion.image`
 
 // Model is the Schema for the models API
 type Model struct {
