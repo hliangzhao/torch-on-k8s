@@ -27,9 +27,8 @@ const (
 	DefaultModelPathInImage = "/torch-on-k8s-model"
 )
 
-/* Local storage related. The following labels are used when local storage mode is chosen for model saving. */
-
-type NodeStorageType string
+/* Local storage related. The following labels are used for selecting
+the best node for model artifact saving when using local host path. */
 
 const (
 	LabelNodeStorageType     = ProjectPrefix + "/storage-type"

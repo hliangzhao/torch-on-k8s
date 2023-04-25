@@ -196,7 +196,7 @@ func (r *TorchJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	// TODO: Why set default here?
+	// set the untouched fields of the given torchjob spec as default before reconciliation
 	r.Scheme.Default(torchJobCopy)
 
 	// entrust the job controller to do the reconciliation

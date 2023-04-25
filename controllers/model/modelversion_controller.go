@@ -112,6 +112,7 @@ func (r *Reconciler) Reconcile(_ context.Context, req ctrl.Request) (ctrl.Result
 
 	// if the corresponding model does not exist, create it
 	model := &modelv1alpha1.Model{}
+	// TODO: Where mv.Spec.Model is set?
 	err = r.Get(context.Background(), types.NamespacedName{Namespace: mv.Namespace, Name: mv.Spec.Model}, model)
 	if err != nil {
 		if errors.IsNotFound(err) {

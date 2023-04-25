@@ -56,6 +56,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 	minMembers map[trainv1alpha1.TaskType]*int32, jobStatus trainv1alpha1.JobStatus, runPolicy *trainv1alpha1.RunPolicy,
 	modelVersion *modelv1alpha1.ModelVersionSpec) (result reconcile.Result, err error) {
 
+	// get job name and job key
 	jobName := job.GetName()
 	jobKey, err := GetJobKey(job)
 	if err != nil {
@@ -93,9 +94,18 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 	prevNumRetry := jc.BackoffStatesQueue.NumRequeues(jobKey)
 	activePods := filterActivePods(pods)
 	numActivePods := int32(len(activePods))
-	numFailedPods := filterPodByPhase(pods, corev1.PodFailed)
-	numTotalTasks := utils.GetTotalTasks(tasks)
-	prevNumFailedTasks := getTotalFailedTasks(jobStatus.TaskStatuses)
+	numFailedPods := filterPodByStatusPhase(pods, corev1.PodFailed)
+	// note that a task wraps a pod, thus, pod num <--> task num
+	// TODO: This seems buggy. If we set pg.Spec.MinMember when gang scheduling enabled, numTotalExpectedPods
+	//  should not be the number of all tasks, but pg.Spec.MinMember. Check this and fix it if required.
+	numTotalExpectedPods := utils.GetTotalTasks(tasks)
+	// prevNumFailedPods is retrieved from job status, which is an old info that might need to be updated
+	prevNumFailedPods := getTotalFailedTasks(jobStatus.TaskStatuses)
+
+	/* 1. Our first logic in the reconciliation is that, check the job should be terminated or not.
+	The termination happens when the job succeed, failed, exceeds the backoff limits, or no longer active.
+	If yes, delete all the controlled objects, set the future job cleanups, and output the model artifact
+	into an image. */
 
 	var failureMsg string
 	jobExceedsLimit := false
@@ -103,12 +113,8 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 	pastBackoffLimit := false
 
 	if runPolicy.BackoffLimit != nil {
-		jobHasNewFailedPods := numFailedPods > prevNumFailedTasks
-		// Note that here we can compare numActivePods and numTotalTasks because
-		// a task wraps only one pod.
-		// TODO: This seems buggy. If we set pg.Spec.MinMember when gang scheduling enabled, we should not
-		//  compare numActivePods with numTotalTasks, but pg.Spec.MinMember.
-		exceedsBackoffLimit = jobHasNewFailedPods && (numActivePods != numTotalTasks) &&
+		jobHasNewFailedPods := numFailedPods > prevNumFailedPods
+		exceedsBackoffLimit = jobHasNewFailedPods && (numActivePods != numTotalExpectedPods) &&
 			(int32(prevNumRetry)+1) > *runPolicy.BackoffLimit
 		pastBackoffLimit, err = jc.pastBackoffLimit(jobName, runPolicy, tasks, pods)
 		if err != nil {
@@ -117,39 +123,44 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 	}
 
 	if exceedsBackoffLimit || pastBackoffLimit {
-		// check if the number of pod restart exceeds backoff (for restart OnFailure only)
-		// OR if the number of failed jobs increased since the last syncJob
+		// check if the number of pod restart exceeds backoff (for restart OnFailure only),
+		// or if the number of failed jobs increased since the last syncJob
 		jobExceedsLimit = true
 		failureMsg = fmt.Sprintf("Job %s has failed because it has reached the specified backoff limit", jobName)
 	} else if jc.pastActiveDeadline(runPolicy, jobStatus) {
 		jobExceedsLimit = true
-		failureMsg = fmt.Sprintf("Job %s has failed because it was active longer than specified deadline", jobName)
+		failureMsg = fmt.Sprintf("Job %s has failed because it was no longer active", jobName)
 		now := metav1.Now()
 		jobStatus.CompletionTime = &now
 	}
 
-	// Delete all controlled pods and services if the job has terminated.
-	// And then, do the related operations, such as output model, etc.
+	// Delete all the controlled pods and services if the job should be terminated (succeeded / failed / exceeds backoff limits).
+	// And then, do the related operations, such as output the model artifact into an image, etc.
 	if utils.IsSucceeded(jobStatus) || utils.IsFailed(jobStatus) || jobExceedsLimit {
+		// deleted controlled pods & services
 		if err = jc.deletePodsAndServices(runPolicy, job, pods); err != nil {
 			return result, err
 		}
 
+		// set the job to be deleted automatically when the ttl is satisfied
 		if result, err = jc.cleanupJob(runPolicy, jobStatus, job); err != nil {
 			return result, err
 		}
 
-		// If enable gang scheduling, delete the corresponding podgroups
+		// If enable gang scheduling, delete the corresponding podgroups.
 		if jc.Config.EnableGangScheduling {
 			jc.Recorder.Event(job, corev1.EventTypeNormal, "JobTerminated", "Job has been terminated. Deleting PodGroup")
 			if err = jc.DeletePodGroup(job); err != nil {
-				jc.Recorder.Eventf(job, corev1.EventTypeWarning, "FailedDeleteGang", "Error deleting: %v", err)
+				jc.Recorder.Eventf(job, corev1.EventTypeWarning, "FailedDeletePodGroup",
+					"Error deleting podgroup for job %v: %v", jobName, err)
 				return result, err
 			} else {
-				jc.Recorder.Eventf(job, corev1.EventTypeNormal, "SuccessfulDeleteGang", "Deleted gang: %v", jobName)
+				jc.Recorder.Eventf(job, corev1.EventTypeNormal, "SuccessfulDeletePodGroup",
+					"Successfully deleted podgroup for job: %v", jobName)
 			}
 		}
 
+		// If the job exceeds the backoff limit, it must be failed. Update the condition.
 		if jobExceedsLimit {
 			jc.Recorder.Event(job, corev1.EventTypeNormal, utils.JobFailedReason, failureMsg)
 			if jobStatus.CompletionTime == nil {
@@ -188,10 +199,20 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 		return result, nil
 	}
 
-	// The job is still running. Do the following operations, such as create podgroup, create/update/delete pods & services.
+	/* 2. Our second logic in the reconciliation is that, since the job is still running (not terminated),
+	we reconcile the job and its controlled objects towards the expectations.
+	Works to do:
+	(1) Create the podgroups for the job if gang scheduling is enabled.
+	(2) Do elastic scaling for the job if the job's generation changed and elastic scaling is enabled.
+	    Here the elastic scaling means restarting all the stale pods & services to update their generation
+	    status and generation to the expected one.
+	(3) Reconcile the controlled pods and services of the job in the order of task type
+	    (aimaster --> master --> worker).
+	(4) Update pods, services, and job status if changed.
+	(5) Do the metering of job launch delay. */
 
 	if jc.Config.EnableGangScheduling {
-		log.Infof("gang schedule enabled, start to syncing for job %s", jobKey)
+		log.Infof("gang scheduling enabled, start to syncing for job %s", jobKey)
 		if _, err = jc.CreatePodGroup(job, tasks, minMembers, runPolicy.SchedulingPolicy); err != nil {
 			return result, err
 		}
@@ -202,7 +223,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 	// 2. Elastic scaling is enabled.
 	// 3. Generation has incremented, which represents the expected number of tasks changed.
 	if utils.IsRunning(*oldJobStatus) && jc.Controller.EnableElasticScaling(job, runPolicy) {
-		// Firstly, check necessity of checkpoint, notify aimaster executing checkpoint if it is.
+		// Firstly, check necessity of checkpoint. If yes, notify aimaster executing checkpointing.
 		// Once checkpoint triggered, scale out/in progress will be hold util it completed.
 		done, err := jc.Controller.TriggerCheckpointIfNecessary(job, pods)
 		if err != nil {
@@ -210,17 +231,17 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 			return result, err
 		}
 
-		// No in-progressing checkpoint and generation has incremented (scale out or scale in happened).
-		if done && job.GetGeneration() > 1 {
-			// numTotalTasks is the expected total task num while numActiveTasksInNewGen is the actual
-			numActiveTasksInNewGen := getNumTasksForLatestGeneration(pods, job.GetGeneration())
-			if numTotalTasks > numActiveTasksInNewGen {
+		// No in-progressing checkpoint and generation has incremented, scaling can be started.
+		if done && job.GetGeneration() > 1 { // NOTE that the generation of an object +1 anytime the spec of it changes.
+			// numTotalExpectedPods is the expected total task num while numPodsInNewGen is the actual
+			numPodsInNewGen := getNumTasksOfGeneration(pods, job.GetGeneration())
+			if numPodsInNewGen < numTotalExpectedPods {
 				err = jc.Controller.ScaleOut(job, tasks, pods, services)
-			} else if numTotalTasks < numActiveTasksInNewGen {
+			} else if numPodsInNewGen > numTotalExpectedPods {
 				err = jc.Controller.ScaleIn(job, tasks, pods, services)
 			}
 			if err != nil {
-				log.Errorf("failed to execute elastic scaling, err: %v", err)
+				log.Errorf("failed to execute elastic scaling for job %v, err: %v", jobName, err)
 				return result, err
 			}
 		}
@@ -228,10 +249,11 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 
 	restart := false
 
-	// add moth path to container env
+	// Set an env var for every container of the job tasks (if it is not set)
+	// to instruct the job to output the model artifact into the specified path.
 	addModelPathEnv(tasks, modelVersion)
 
-	// reconcile each task in order
+	// reconcile the tasks in the correct order, which is important for DAG scheduling
 	ctx := context.WithValue(context.Background(), trainv1alpha1.ContextHostNetworkPorts, make(map[string]int32))
 	for _, taskType := range jc.Controller.GetTaskReconcilerOrders() {
 		taskSpec, exist := tasks[taskType]
@@ -242,11 +264,11 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 		// non-aimaster tasks should wait until the aimaster task is ready
 		if utils.ContainsTaskType(tasks, trainv1alpha1.TaskTypeAIMaster) && taskType != trainv1alpha1.TaskTypeAIMaster &&
 			job.GetAnnotations()["aimaster"] != "ready" {
-			klog.Infof("Task aimaster is not ready and reconciling is frozen.")
+			klog.Infof("aimaster is not ready and reconciling is frozen.", "job", jobName)
 			return reconcile.Result{}, nil
 		}
 
-		klog.Infof("reconciles task type: %s", taskType)
+		klog.Infof("reconciles task type %s for job %s", taskType, jobName)
 
 		// If DAG scheduling has been enabled, and current task has upstream task,
 		// wait util all upstream tasks ready.
@@ -258,15 +280,15 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 		// upstream is ready, reconcile pod(s) for current task
 		err = jc.ReconcilePods(ctx, job, &jobStatus, pods, taskType, taskSpec, tasks, runPolicy, &restart)
 		if err != nil {
-			klog.Warningf("ReconcilePods error %v", err)
+			klog.Errorf("failed to reconcile pods, err: %v, job: %v", err, jobName)
 			return result, err
 		}
 
-		// reconcile service(s) for the task if required
+		// reconcile service(s) for torch master task
 		if jc.Controller.GetAPIGroupVersionKind().Kind == trainv1alpha1.TorchJobKind {
 			torchJob, ok := job.(*trainv1alpha1.TorchJob)
 			if !ok {
-				klog.Warningf("job is not a TorchJob")
+				klog.Warningf("job %v is not a TorchJob", jobName)
 			}
 			if torchJob.Spec.EnableTorchElastic && taskType != trainv1alpha1.TaskTypeTorchMaster {
 				continue
@@ -274,7 +296,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 		}
 		err = jc.ReconcileServices(ctx, job, services, taskType, taskSpec)
 		if err != nil {
-			klog.Warningf("ReconcileServices error %v", err)
+			klog.Errorf("failed to reconcile services, err: %v, job: %v", err, jobName)
 			return result, err
 		}
 	}
@@ -282,7 +304,7 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 	// Controlled pods & services are reconciled, update the job status
 	err = jc.Controller.UpdateJobStatus(job, tasks, &jobStatus, restart)
 	if err != nil {
-		klog.Warningf("UpdateJobStatus error %v", err)
+		klog.Errorf("failed to update job status, err: %v, job: %v", err, jobName)
 		return result, err
 	}
 
@@ -299,8 +321,8 @@ func (jc *JobController) ReconcileJobs(job client.Object, tasks map[trainv1alpha
 	//    finally return back to running state.
 	//
 	// Case 3 should be discarded.
-	if getTotalActivePods(jobStatus.TaskStatuses) == numTotalTasks &&
-		getTotalActivePods(oldJobStatus.TaskStatuses) < numTotalTasks &&
+	if getTotalActivePods(jobStatus.TaskStatuses) == numTotalExpectedPods &&
+		getTotalActivePods(oldJobStatus.TaskStatuses) < numTotalExpectedPods &&
 		!utils.IsRestarting(*oldJobStatus) {
 		jc.Metrics.AllPodsLaunchDelaySeconds(pods, job, jobStatus)
 	}
@@ -337,8 +359,8 @@ func filterActivePods(pods []*corev1.Pod) []*corev1.Pod {
 	return ret
 }
 
-// filterPodByPhase calculates the number of pods that in the given phase.
-func filterPodByPhase(pods []*corev1.Pod, phase corev1.PodPhase) int32 {
+// filterPodByStatusPhase calculates the number of pods that in the given phase.
+func filterPodByStatusPhase(pods []*corev1.Pod, phase corev1.PodPhase) int32 {
 	var result int32
 	for i := range pods {
 		if phase == pods[i].Status.Phase {
@@ -438,6 +460,8 @@ func (jc *JobController) deletePodsAndServices(runPolicy *trainv1alpha1.RunPolic
 }
 
 // creteModelVersion creates a modelversion resource in cluster for the given job.
+// This will trigger the modelversion controller do the creation reconciliation,
+// such that the model image which stores the model artifact can be built.
 func (jc *JobController) creteModelVersion(job metav1.Object, modelVersion *modelv1alpha1.ModelVersionSpec,
 	pods []*corev1.Pod, jobStatus *trainv1alpha1.JobStatus) error {
 
@@ -458,7 +482,7 @@ func (jc *JobController) creteModelVersion(job metav1.Object, modelVersion *mode
 		}
 	}
 
-	// model version not found, create it
+	// modelversion not found, create it
 	mv = &modelv1alpha1.ModelVersion{}
 	mv.Namespace = job.GetNamespace()
 	mv.Name = mvName
@@ -472,13 +496,13 @@ func (jc *JobController) creteModelVersion(job metav1.Object, modelVersion *mode
 	// create modelversion resource in cluster
 	err = jc.Client.Create(context.Background(), mv)
 	if err != nil {
-		klog.Errorf("failed to create model version %s", mv.Name)
+		klog.Errorf("failed to create modelversion %s", mv.Name)
 		return err
 	}
 
 	// update job status
 	jobStatus.ModelVersionName = mv.Name
-	klog.Infof("created model version %s", mv.Name)
+	klog.Infof("successfully created modelversion %s", mv.Name)
 
 	return nil
 }
@@ -514,8 +538,8 @@ func (jc *JobController) cleanupJob(runPolicy *trainv1alpha1.RunPolicy, jobStatu
 	return res, nil
 }
 
-// getNumTasksForLatestGeneration returns the number of pods which has the same generation as provided.
-func getNumTasksForLatestGeneration(pods []*corev1.Pod, generation int64) int32 {
+// getNumTasksOfGeneration returns the number of pods which has the same generation as provided.
+func getNumTasksOfGeneration(pods []*corev1.Pod, generation int64) int32 {
 	gen := strconv.FormatInt(generation, 10)
 	ret := int32(0)
 	for _, pod := range pods {
@@ -526,7 +550,10 @@ func getNumTasksForLatestGeneration(pods []*corev1.Pod, generation int64) int32 
 	return ret
 }
 
-// addModelPathEnv adds the model path env var and mounts the model volume for every container in the given tasks.
+// addModelPathEnv adds an environment variable to indicate where the model artifact to be saved, and
+// then create a volume to mount for every container of the job tasks. In this case, the job tasks
+// can output the trained model artifact into this volume. With that, the Kaniko pod can fetch the model
+// artifact from the volume such that the model image can be successfully created.
 func addModelPathEnv(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, modelVersion *modelv1alpha1.ModelVersionSpec) {
 	if modelVersion == nil {
 		return
@@ -553,7 +580,8 @@ func addModelPathEnv(tasks map[trainv1alpha1.TaskType]*trainv1alpha1.TaskSpec, m
 	}
 }
 
-// shouldCreateService checks for the given task type, whether we need to create a service for it.
+// shouldCreateService checks service should be created or not for the given task type.
+// For torchjob, service is created only for master task.
 func (jc *JobController) shouldCreateService(taskType trainv1alpha1.TaskType) bool {
 	if jc.Controller.GetAPIGroupVersionKind().Kind == trainv1alpha1.TorchJobKind && taskType != trainv1alpha1.TaskTypeTorchMaster {
 		return false

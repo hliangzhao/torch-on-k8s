@@ -103,7 +103,7 @@ func (lsp *Provider) AddModelVolumeToPodSpec(modelstorage *modelv1alpha1.Storage
 	}
 }
 
-// GetModelMountPath returns the mount path inside each container of the pod where the model artifact will be stored.
+// GetModelMountPath returns the mount path where the model artifact will be stored.
 func (lsp *Provider) GetModelMountPath(modelstorage *modelv1alpha1.Storage) string {
 	return modelstorage.LocalStorage.MountPath
 }

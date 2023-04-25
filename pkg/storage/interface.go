@@ -24,7 +24,12 @@ import (
 /* The storage interface. */
 
 type Storage interface {
+	// CreatePersistentVolume creates a pv with the provided storage type.
 	CreatePersistentVolume(mv *modelv1alpha1.Storage, pvName string) *corev1.PersistentVolume
+
+	// AddModelVolumeToPodSpec creates a volume and mounts the volume into all the containers of the pod.
 	AddModelVolumeToPodSpec(mv *modelv1alpha1.Storage, podTplSpec *corev1.PodTemplateSpec)
+
+	// GetModelMountPath returns the mount path where the model artifact will be stored.
 	GetModelMountPath(mv *modelv1alpha1.Storage) string
 }
